@@ -1257,19 +1257,6 @@ def render_curated_dashboard(curated_df: pd.DataFrame, selected_classes: list[st
             filtered["Ticker"].str.lower().str.contains(query, na=False)
             | filtered["Name_Final"].fillna("").str.lower().str.contains(query, na=False)
         ]
-    avg_signal = filtered["Master_Score"].mean()
-    top_regime = filtered["Regime"].mode().iat[0] if not filtered.empty else "&mdash;"
-    st.markdown(
-        build_summary_strip(
-            [
-                ("Focus Assets", f"{len(filtered):,}"),
-                ("Average Signal", "&mdash;" if pd.isna(avg_signal) else f"{avg_signal:.1f}"),
-                ("Dominant Regime", escape(top_regime) if top_regime != "&mdash;" else "&mdash;"),
-                ("Source Date", "2026-04-02"),
-            ]
-        ),
-        unsafe_allow_html=True,
-    )
     if filtered.empty:
         st.info("No focus assets match the current filters.")
         return
@@ -1288,19 +1275,6 @@ def render_universe_dashboard(universe_df: pd.DataFrame, selected_classes: list[
             | filtered["Name"].fillna("").str.lower().str.contains(query, na=False)
         ]
     filtered = filtered.sort_values([CLASS_COL, "Master_Score", "Ticker"], ascending=[True, False, True])
-    avg_master = filtered["Master_Score"].mean() if not filtered.empty else np.nan
-    top_regime = filtered["Regime"].mode().iat[0] if not filtered.empty else "&mdash;"
-    st.markdown(
-        build_summary_strip(
-            [
-                ("Assets Shown", f"{len(filtered):,}"),
-                ("Average Master Score", "&mdash;" if pd.isna(avg_master) else f"{avg_master:.1f}"),
-                ("Top Regime", escape(top_regime) if top_regime != "&mdash;" else "&mdash;"),
-                ("Source Date", "2026-04-02"),
-            ]
-        ),
-        unsafe_allow_html=True,
-    )
     if filtered.empty:
         st.info("No assets match the current filters.")
         return
@@ -1322,39 +1296,6 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
     if filtered.empty:
         st.info("No factors match the current filters.")
         return
-
-    strongest_return = filtered.sort_values("Return_Strength", ascending=False).iloc[0]
-    strongest_21d = filtered.sort_values("21d_value", ascending=False).iloc[0]
-    strongest_21d_text = "&mdash;" if pd.isna(strongest_21d["21d_value"]) else f"{strongest_21d['21d_value'] * 100:.1f}%"
-    extreme_count = (
-        filtered[["21d_z", "63d_z", "126d_z", "252d_z"]]
-        .abs()
-        .ge(2.0)
-        .any(axis=1)
-        .sum()
-    )
-    avg_21d = filtered["21d_value"].mean()
-
-    st.markdown(
-        build_summary_strip(
-            [
-                ("Factors", f"{len(filtered):,}"),
-                ("Average 21D Return", "&mdash;" if pd.isna(avg_21d) else f"{avg_21d * 100:.1f}%"),
-                ("Top Return Strength", escape(str(strongest_return["Factor"]))),
-                ("Extreme Z-Scores", f"{int(extreme_count):,}"),
-            ]
-        ),
-        unsafe_allow_html=True,
-    )
-
-    spotlight_html = (
-        "<div class='state-grid'>"
-        f"<div class='state-card'><div class='state-label'>Return Strength Leader</div><div class='state-value'>{escape(str(strongest_return['Factor']))}<br>{render_master_bar(strongest_return['Return_Strength'])}</div></div>"
-        f"<div class='state-card'><div class='state-label'>Best 21D Return</div><div class='state-value'>{escape(str(strongest_21d['Factor']))}<br>{strongest_21d_text}</div></div>"
-        f"<div class='state-card'><div class='state-label'>Color Scale</div><div class='state-value'>Return cells are shaded by z-score from the historic endpoint, with deeper green/red marking more statistically unusual moves.</div></div>"
-        "</div>"
-    )
-    st.markdown(spotlight_html, unsafe_allow_html=True)
     st.markdown(build_factor_state_table(filtered), unsafe_allow_html=True)
 
 
@@ -1365,21 +1306,6 @@ def render_macro_dashboard(macro_df: pd.DataFrame) -> None:
 
     valid = macro_df[macro_df["Latest"].notna()].copy()
     available = len(valid)
-    lead_regime = valid["Regime"].mode().iat[0] if available else "&mdash;"
-    avg_z = valid["Z_Score"].mean() if available else np.nan
-    latest_date = valid["As_Of"].max() if available else pd.NaT
-
-    st.markdown(
-        build_summary_strip(
-            [
-                ("Macro Series", f"{len(macro_df):,}"),
-                ("Available", f"{available:,}"),
-                ("Average Z-Score", "&mdash;" if pd.isna(avg_z) else f"{avg_z:.2f}"),
-                ("Latest Update", "&mdash;" if pd.isna(latest_date) else pd.Timestamp(latest_date).date().isoformat()),
-            ]
-        ),
-        unsafe_allow_html=True,
-    )
     st.markdown(build_macro_cards(macro_df), unsafe_allow_html=True)
     if not available:
         st.warning("FRED data could not be loaded for the configured series. Check your API key and network access.")
