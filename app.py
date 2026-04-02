@@ -1390,8 +1390,8 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-            <h1>Institutional Market Overview</h1>
-            <p>Workbook-aligned focus view for your core asset classes, plus a broader scored universe for follow-up analysis and ticker discovery.</p>
+            <h1>Essential Partners Investment Overview</h1>
+            <p>A real-time look at what is happening today's markets.</p>
         </div>
         """,
         unsafe_allow_html=True,
