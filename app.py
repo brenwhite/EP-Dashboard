@@ -87,6 +87,39 @@ BASIC_STATE_FACTORS = [
     "Liquidity",
 ]
 
+FULL_UNIVERSE_PE_CLASSES = {
+    "Greater China Equity",
+    "Europe Equity Large Cap",
+    "Global Emerging Markets Equity",
+    "US Equity Large Cap Value",
+    "Global Equity Large Cap",
+    "US Equity Large Cap Blend",
+    "Global Equity Mid/Small Cap",
+    "Equity Miscellaneous",
+    "Japan Equity",
+    "India Equity",
+    "Korea Equity",
+    "Latin America Equity",
+    "Canadian Equity Large Cap",
+    "Europe Equity Mid/Small Cap",
+    "UK Equity Large Cap",
+    "Australia & New Zealand Equity",
+    "Asia ex-Japan Equity",
+    "Communications Sector Equity",
+    "Consumer Goods & Services Sector Equity",
+    "Energy Sector Equity",
+    "Natural Resources Sector Equity",
+    "Financials Sector Equity",
+    "Healthcare Sector Equity",
+    "Industrials Sector Equity",
+    "Precious Metals Sector Equity",
+    "Technology Sector Equity",
+    "Utilities Sector Equity",
+    "US Equity Mid Cap",
+    "US Equity Small Cap",
+    "Real Estate Sector Equity",
+}
+
 CURATED_TEMPLATE_ROWS = [
     {"Ticker": "SPY", "Display_Name": "S&P 500", CURATED_CLASS_COL: "Equity Markets"},
     {"Ticker": "SCHF", "Display_Name": "International Developed", CURATED_CLASS_COL: "Equity Markets"},
@@ -889,6 +922,7 @@ def build_universe_frame(df: pd.DataFrame) -> pd.DataFrame:
     view["Return_3Y_Display"] = view["Return_3Y"].apply(format_percent_from_decimal)
     view["Return_5Y_Display"] = view["Return_5Y"].apply(format_percent_from_decimal)
     view["PE_Display"] = view.apply(lambda row: format_pe_pair(row["PE_Trailing"], row["PE_Forward"]), axis=1)
+    view.loc[~view[CLASS_COL].isin(FULL_UNIVERSE_PE_CLASSES), "PE_Display"] = "&mdash;"
     return view
 
 
@@ -1029,7 +1063,6 @@ def build_universe_table(group_name: str, group_df: pd.DataFrame) -> str:
     for _, row in group_df.iterrows():
         rows.append(
             "<tr>"
-            f"<td class='signal-col'>{regime_indicator(row['Regime'])}</td>"
             f"<td class='name'>{escape(str(row['Name']))}</td>"
             f"<td class='num'>{row['Yield_Display']}</td>"
             f"<td class='num'>{row['YTD_Display']}</td>"
@@ -1044,7 +1077,7 @@ def build_universe_table(group_name: str, group_df: pd.DataFrame) -> str:
         f"<section class='group-block'><div class='group-header'>{escape(group_name)}</div>"
         "<div class='table-scroll'><table class='market-table universe-table'>"
         "<thead><tr>"
-        "<th>Signal</th><th>Name</th><th>Yield</th><th>YTD</th><th>1Y</th><th>3Y</th><th>5Y</th><th>P/E (LTM/NTM)</th><th>Master Score</th>"
+        "<th>Name</th><th>Yield</th><th>YTD</th><th>1Y</th><th>3Y</th><th>5Y</th><th>P/E (LTM/NTM)</th><th>Master Score</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div></section>"
     )
