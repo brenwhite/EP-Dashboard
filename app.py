@@ -1065,7 +1065,7 @@ def inject_css() -> None:
             box-shadow: 0 10px 30px rgba(150, 140, 131, 0.18);
         }
         .hero h1 { margin: 0; color: rgb(0, 0, 0); font-size: 2rem; font-weight: 700; letter-spacing: 0.01em; }
-        .hero p { margin: 0.5rem 0 0 0; color: rgb(150, 140, 131); font-size: 0.98rem; }
+        .hero p { margin: 0.5rem 0 0 0; color: rgb(0, 0, 0); font-size: 0.98rem; }
         .summary-strip {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
