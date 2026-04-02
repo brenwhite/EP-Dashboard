@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover
 st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_chart:", layout="wide")
 
 
-CSV_FILENAME = "koyfin_Dials2_2026.04.02_10.33.21.677.csv"
+CSV_FILENAME = "data.csv"
 CLASS_COL = "Classification"
 CURATED_CLASS_COL = "Asset Class"
 
@@ -544,6 +544,7 @@ def compute_factor_signal_frame(return_panel: pd.DataFrame) -> pd.DataFrame:
             0.15 * cross_score +
             0.25 * price_mom_score
         )
+        return_strength = 0.70 * trend_score + 0.30 * momentum_score
 
         rows.append(
             {
@@ -567,6 +568,7 @@ def compute_factor_signal_frame(return_panel: pd.DataFrame) -> pd.DataFrame:
                 "Below 52W High %": below_52w,
                 "Trend_Score": trend_score,
                 "Momentum_Score": momentum_score,
+                "Return_Strength": return_strength,
             }
         )
 
@@ -956,8 +958,7 @@ def build_factor_state_table(df: pd.DataFrame) -> str:
         rows.append(
             "<tr>"
             f"<td class='name'>{escape(str(row['Factor']))}</td>"
-            f"<td class='num'>{row['Trend_Score']:.1f}</td>"
-            f"<td class='num'>{row['Momentum_Score']:.1f}</td>"
+            f"<td class='num'>{row['Return_Strength']:.1f}</td>"
             f"{factor_cell('21d')}"
             f"{factor_cell('63d')}"
             f"{factor_cell('126d')}"
@@ -969,7 +970,7 @@ def build_factor_state_table(df: pd.DataFrame) -> str:
         "<div class='group-header'>State of the Market</div>"
         "<div class='table-scroll'><table class='market-table state-table'>"
         "<thead><tr>"
-        "<th>Factor</th><th>Trend</th><th>Momentum</th><th>21D</th><th>63D</th><th>126D</th><th>252D</th>"
+        "<th>Factor</th><th>Return Strength</th><th>21D</th><th>63D</th><th>126D</th><th>252D</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div></section>"
     )
@@ -1322,8 +1323,9 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
         st.info("No factors match the current filters.")
         return
 
-    strongest_trend = filtered.sort_values("Trend_Score", ascending=False).iloc[0]
-    strongest_momentum = filtered.sort_values("Momentum_Score", ascending=False).iloc[0]
+    strongest_return = filtered.sort_values("Return_Strength", ascending=False).iloc[0]
+    strongest_21d = filtered.sort_values("21d_value", ascending=False).iloc[0]
+    strongest_21d_text = "&mdash;" if pd.isna(strongest_21d["21d_value"]) else f"{strongest_21d['21d_value'] * 100:.1f}%"
     extreme_count = (
         filtered[["21d_z", "63d_z", "126d_z", "252d_z"]]
         .abs()
@@ -1338,7 +1340,7 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
             [
                 ("Factors", f"{len(filtered):,}"),
                 ("Average 21D Return", "&mdash;" if pd.isna(avg_21d) else f"{avg_21d * 100:.1f}%"),
-                ("Strongest Trend", escape(str(strongest_trend["Factor"]))),
+                ("Top Return Strength", escape(str(strongest_return["Factor"]))),
                 ("Extreme Z-Scores", f"{int(extreme_count):,}"),
             ]
         ),
@@ -1347,8 +1349,8 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
 
     spotlight_html = (
         "<div class='state-grid'>"
-        f"<div class='state-card'><div class='state-label'>Trend Leader</div><div class='state-value'>{escape(str(strongest_trend['Factor']))}<br>{render_master_bar(strongest_trend['Trend_Score'])}</div></div>"
-        f"<div class='state-card'><div class='state-label'>Momentum Leader</div><div class='state-value'>{escape(str(strongest_momentum['Factor']))}<br>{render_master_bar(strongest_momentum['Momentum_Score'])}</div></div>"
+        f"<div class='state-card'><div class='state-label'>Return Strength Leader</div><div class='state-value'>{escape(str(strongest_return['Factor']))}<br>{render_master_bar(strongest_return['Return_Strength'])}</div></div>"
+        f"<div class='state-card'><div class='state-label'>Best 21D Return</div><div class='state-value'>{escape(str(strongest_21d['Factor']))}<br>{strongest_21d_text}</div></div>"
         f"<div class='state-card'><div class='state-label'>Color Scale</div><div class='state-value'>Return cells are shaded by z-score from the historic endpoint, with deeper green/red marking more statistically unusual moves.</div></div>"
         "</div>"
     )
