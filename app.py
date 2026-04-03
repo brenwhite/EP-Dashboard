@@ -1359,4 +1359,60 @@ def main() -> None:
     with st.sidebar:
         st.header("Dashboard")
         dashboard_mode = st.radio("View", ["Curated Overview", "Full Universe", "State of the Market", "Macro Dashboard"], index=0)
-        search_label = "Search Factor" if dashboard_mode == "State of the Market" els
+        if dashboard_mode == "State of the Market":
+            search_label = "Search Factor"
+            search_placeholder = "Market, Momentum, GoldPrice..."
+        else:
+            search_label = "Search Ticker"
+            search_placeholder = "SPY, TLT, GLD..."
+        ticker_query = st.text_input(search_label, placeholder=search_placeholder)
+        if dashboard_mode == "Curated Overview":
+            selected_curated_classes = st.multiselect("Asset Class", options=curated_classes, default=curated_classes)
+            selected_universe_classes = universe_classes
+        else:
+            selected_curated_classes = curated_classes
+            if dashboard_mode == "Full Universe":
+                selected_universe_classes = st.multiselect("Universe Group", options=universe_classes, default=universe_classes)
+            else:
+                selected_universe_classes = universe_classes
+        st.caption("Dashboard data is loaded from local files plus the configured external macro/factor APIs.")
+
+    query_text = ticker_query.strip()
+
+    if dashboard_mode == "Curated Overview":
+        curated_selection = curated_base[curated_base[CURATED_CLASS_COL].isin(selected_curated_classes)].copy()
+        if query_text:
+            query = query_text.lower()
+            curated_selection = curated_selection[
+                curated_selection["Ticker"].str.lower().str.contains(query, na=False)
+                | curated_selection["Display_Name"].fillna("").str.lower().str.contains(query, na=False)
+                | curated_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
+            ]
+        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(curated_selection["Ticker"].dropna().unique().tolist())))
+        curated_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
+        curated_df = build_curated_frame(scored_df, curated_enrichment_df, template_df)
+        render_curated_dashboard(curated_df, selected_curated_classes, query_text)
+    elif dashboard_mode == "Full Universe":
+        universe_selection = universe_base[universe_base[FULL_UNIVERSE_GROUP_COL].isin(selected_universe_classes)].copy()
+        if query_text:
+            query = query_text.lower()
+            universe_selection = universe_selection[
+                universe_selection["Ticker"].str.lower().str.contains(query, na=False)
+                | universe_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
+            ]
+        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(universe_selection["Ticker"].dropna().unique().tolist())))
+        universe_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
+        universe_df = build_universe_frame(scored_df.merge(universe_enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
+        render_universe_dashboard(universe_df, selected_universe_classes, query_text)
+    elif dashboard_mode == "State of the Market":
+        render_state_market_dashboard(state_factor_df, query_text)
+    else:
+        render_macro_dashboard(macro_df)
+
+    st.caption(
+        "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
+    )
+
+
+if __name__ == "__main__":
+    main()
