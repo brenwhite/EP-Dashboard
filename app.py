@@ -498,6 +498,84 @@ def fetch_macro_labor_panels() -> dict[str, object]:
     return {"panels": panels, "errors": errors}
 
 
+def recession_periods_from_indicator(series: pd.DataFrame) -> pd.DataFrame:
+    indicator = series.copy().dropna()
+    if indicator.empty:
+        return pd.DataFrame(columns=["start", "end"])
+
+    indicator["flag"] = indicator["value"].fillna(0).astype(int)
+    starts: list[pd.Timestamp] = []
+    ends: list[pd.Timestamp] = []
+    in_recession = False
+    start = None
+
+    for idx, flag in indicator["flag"].items():
+        if flag == 1 and not in_recession:
+            in_recession = True
+            start = pd.Timestamp(idx)
+        elif flag == 0 and in_recession:
+            in_recession = False
+            starts.append(start)
+            ends.append(pd.Timestamp(idx))
+    if in_recession and start is not None:
+        starts.append(start)
+        ends.append(pd.Timestamp(indicator.index[-1]) + pd.offsets.MonthEnd(1))
+
+    return pd.DataFrame({"start": starts, "end": ends})
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_macro_stagflation_panels() -> dict[str, object]:
+    api_key = get_fred_api_key()
+    if not api_key:
+        return {"panels": {}, "errors": {"all": "Missing FRED API key."}}
+
+    panels: dict[str, pd.DataFrame] = {}
+    errors: dict[str, str] = {}
+
+    try:
+        real_earnings = resample_to_monthly_last(fred_series_observations("CES0500000030", api_key=api_key, units="pc1"))
+        real_earnings = real_earnings.rename(columns={"value": "real_avg_weekly_earnings_yoy"})
+
+        cpi = resample_to_monthly_last(fred_series_observations("CPIAUCSL", api_key=api_key, units="pc1"))
+        cpi = cpi.rename(columns={"value": "cpi_yoy"})
+
+        earnings_vs_cpi = real_earnings.join(cpi, how="outer").dropna(how="all")
+        earnings_vs_cpi = earnings_vs_cpi.loc[earnings_vs_cpi.index >= pd.Timestamp("2022-01-01")]
+        panels["earnings_vs_cpi"] = earnings_vs_cpi
+    except Exception as exc:
+        errors["earnings_vs_cpi"] = f"CES0500000030/CPIAUCSL unavailable: {exc}"
+
+    try:
+        nfp = resample_to_monthly_last(fred_series_observations("PAYEMS", api_key=api_key, units="pc1"))
+        nfp = nfp.rename(columns={"value": "nfp_yoy"})
+
+        energy = resample_to_monthly_last(fred_series_observations("DNRGRC1M027SBEA", api_key=api_key, units="lin"))
+        energy = energy.rename(columns={"value": "energy_pce"})
+
+        total_pce = resample_to_monthly_last(fred_series_observations("PCE", api_key=api_key, units="lin"))
+        total_pce = total_pce.rename(columns={"value": "total_pce"})
+
+        recession = resample_to_monthly_last(fred_series_observations("USREC", api_key=api_key, units="lin"))
+        recession = recession.rename(columns={"value": "recession"})
+
+        energy_share = energy.join(total_pce, how="outer")
+        energy_share["energy_share_pct"] = np.where(
+            energy_share["total_pce"] != 0,
+            (energy_share["energy_pce"] / energy_share["total_pce"]) * 100.0,
+            np.nan,
+        )
+
+        employment_vs_energy = nfp.join(energy_share[["energy_share_pct"]], how="outer").dropna(how="all")
+        employment_vs_energy = employment_vs_energy.loc[employment_vs_energy.index >= pd.Timestamp("1972-01-01")]
+        panels["employment_vs_energy"] = employment_vs_energy
+        panels["recession_periods"] = recession_periods_from_indicator(recession.loc[recession.index >= pd.Timestamp("1972-01-01")])
+    except Exception as exc:
+        errors["employment_vs_energy"] = f"PAYEMS/DNRGRC1M027SBEA/PCE/USREC unavailable: {exc}"
+
+    return {"panels": panels, "errors": errors}
+
+
 def factor_api_get_json(path: str, timeout: int = 30) -> dict:
     last_error: Exception | None = None
     for base_url in FACTORS_API_BASE_CANDIDATES:
@@ -1242,6 +1320,186 @@ def render_labor_section(labor_payload: dict[str, object]) -> None:
         st.caption(f"Missing or unavailable FRED labor series: {missing}")
 
 
+def build_earnings_vs_cpi_chart(df: pd.DataFrame) -> alt.Chart:
+    chart_df = df.copy().dropna(how="all").reset_index().rename(columns={"index": "date"})
+    x_encoding = alt.X(
+        "date:T",
+        axis=alt.Axis(
+            title=None,
+            format="%b-%y",
+            labelAngle=-90,
+            labelColor="black",
+            tickColor="black",
+            domainColor="black",
+            grid=False,
+        ),
+    )
+
+    earnings = (
+        alt.Chart(chart_df)
+        .mark_line(color="#2f3134", strokeWidth=4)
+        .encode(
+            x=x_encoding,
+            y=alt.Y(
+                "real_avg_weekly_earnings_yoy:Q",
+                axis=alt.Axis(title=None, format=".1f", labelColor="black", tickColor="black", domainColor="black", grid=False),
+                scale=alt.Scale(zero=False),
+            ),
+        )
+    )
+    cpi = (
+        alt.Chart(chart_df)
+        .mark_line(color="#e2833d", strokeWidth=4)
+        .encode(
+            x=x_encoding,
+            y=alt.Y(
+                "cpi_yoy:Q",
+                axis=alt.Axis(
+                    title=None,
+                    orient="right",
+                    format=".0f",
+                    labelColor="#e2833d",
+                    tickColor="#e2833d",
+                    domainColor="#e2833d",
+                    grid=False,
+                ),
+                scale=alt.Scale(zero=True),
+            ),
+        )
+    )
+
+    return (
+        alt.layer(earnings, cpi)
+        .resolve_scale(y="independent")
+        .properties(
+            height=350,
+            title=alt.TitleParams(
+                text="Real Avg Weekly Earnings (YoY %) vs CPI YoY",
+                subtitle="Real average weekly earnings vs headline CPI inflation",
+                fontSize=14,
+                subtitleFontSize=11,
+                anchor="start",
+                dy=-8,
+            ),
+            background="rgb(210, 200, 191)",
+        )
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+    )
+
+
+def build_employment_vs_energy_chart(df: pd.DataFrame, recession_periods: pd.DataFrame) -> alt.Chart:
+    chart_df = df.copy().dropna(how="all").reset_index().rename(columns={"index": "date"})
+    x_encoding = alt.X(
+        "date:T",
+        axis=alt.Axis(
+            title=None,
+            format="%b-%y",
+            labelAngle=-90,
+            labelColor="black",
+            tickColor="black",
+            domainColor="black",
+            grid=False,
+        ),
+    )
+
+    recession_layer = alt.Chart(recession_periods).mark_rect(color="#9aa0a6", opacity=0.35).encode(
+        x="start:T",
+        x2="end:T",
+    )
+    nfp = (
+        alt.Chart(chart_df)
+        .mark_line(color="#2f3134", strokeWidth=4)
+        .encode(
+            x=x_encoding,
+            y=alt.Y(
+                "nfp_yoy:Q",
+                axis=alt.Axis(title=None, format=".1f", labelColor="black", tickColor="black", domainColor="black", grid=False),
+                scale=alt.Scale(zero=True),
+            ),
+        )
+    )
+    energy = (
+        alt.Chart(chart_df)
+        .mark_line(color="#ff1b12", strokeWidth=3)
+        .encode(
+            x=x_encoding,
+            y=alt.Y(
+                "energy_share_pct:Q",
+                axis=alt.Axis(
+                    title=None,
+                    orient="right",
+                    format=".0f",
+                    labelColor="#ff1b12",
+                    tickColor="#ff1b12",
+                    domainColor="#ff1b12",
+                    grid=False,
+                ),
+                scale=alt.Scale(zero=True),
+            ),
+        )
+    )
+
+    return (
+        alt.layer(recession_layer, nfp, energy)
+        .resolve_scale(y="independent")
+        .properties(
+            height=350,
+            title=alt.TitleParams(
+                text="Employment Growth vs Real Energy Price Shocks",
+                subtitle="NFP YoY growth vs gas and other energy share of PCE",
+                fontSize=14,
+                subtitleFontSize=11,
+                anchor="start",
+                dy=-8,
+            ),
+            background="rgb(210, 200, 191)",
+        )
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+    )
+
+
+def render_stagflation_section(stagflation_payload: dict[str, object]) -> None:
+    panels = stagflation_payload.get("panels", {})
+    errors = stagflation_payload.get("errors", {})
+
+    st.markdown(
+        """
+        <section class="group-block">
+            <div class="group-header">Stagflation to Flation</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(2)
+    with cols[0]:
+        left_df = panels.get("earnings_vs_cpi")
+        if isinstance(left_df, pd.DataFrame) and not left_df.empty:
+            st.altair_chart(build_earnings_vs_cpi_chart(left_df), use_container_width=True)
+        else:
+            st.info(errors.get("earnings_vs_cpi", "Real earnings vs CPI data could not be loaded from FRED."))
+
+    with cols[1]:
+        right_df = panels.get("employment_vs_energy")
+        recession_df = panels.get("recession_periods")
+        if (
+            isinstance(right_df, pd.DataFrame)
+            and not right_df.empty
+            and isinstance(recession_df, pd.DataFrame)
+        ):
+            st.altair_chart(build_employment_vs_energy_chart(right_df, recession_df), use_container_width=True)
+        else:
+            st.info(errors.get("employment_vs_energy", "Employment vs energy-share data could not be loaded from FRED."))
+
+    if errors:
+        missing = " | ".join(str(msg) for msg in errors.values())
+        st.caption(f"Missing or unavailable FRED stagflation series: {missing}")
+
+
 def build_curated_table(group_name: str, group_df: pd.DataFrame) -> str:
     rows: list[str] = []
     for _, row in group_df.iterrows():
@@ -1564,7 +1822,11 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
     st.markdown(build_factor_state_table(filtered), unsafe_allow_html=True)
 
 
-def render_macro_dashboard(macro_df: pd.DataFrame, labor_payload: dict[str, object]) -> None:
+def render_macro_dashboard(
+    macro_df: pd.DataFrame,
+    labor_payload: dict[str, object],
+    stagflation_payload: dict[str, object],
+) -> None:
     if macro_df.empty:
         st.info("Add `FRED_API_KEY` to `st.secrets` or your environment to load the macro dashboard.")
         return
@@ -1575,6 +1837,7 @@ def render_macro_dashboard(macro_df: pd.DataFrame, labor_payload: dict[str, obje
     if not available:
         st.warning("FRED data could not be loaded for the configured series. Check the API key, network access, or any series-processing errors shown on the cards.")
     render_labor_section(labor_payload)
+    render_stagflation_section(stagflation_payload)
 
 
 def main() -> None:
@@ -1609,6 +1872,7 @@ def main() -> None:
         state_factor_df = pd.DataFrame()
     macro_df = fetch_macro_backdrop()
     labor_payload = fetch_macro_labor_panels()
+    stagflation_payload = fetch_macro_stagflation_panels()
     universe_base = scored_df.merge(file_enrichment_df, on="Ticker", how="left").merge(full_universe_schema_df, on="Ticker", how="left")
     universe_base[FULL_UNIVERSE_GROUP_COL] = universe_base[FULL_UNIVERSE_GROUP_COL].fillna("Other/Unmapped")
     curated_base = template_df.merge(scored_df, on="Ticker", how="left", suffixes=("", "_csv")).merge(file_enrichment_df, on="Ticker", how="left")
@@ -1667,7 +1931,7 @@ def main() -> None:
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
-        render_macro_dashboard(macro_df, labor_payload)
+        render_macro_dashboard(macro_df, labor_payload, stagflation_payload)
 
     st.caption(
         "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
