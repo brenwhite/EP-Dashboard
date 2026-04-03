@@ -503,7 +503,8 @@ def recession_periods_from_indicator(series: pd.DataFrame) -> pd.DataFrame:
     if indicator.empty:
         return pd.DataFrame(columns=["start", "end"])
 
-    indicator["flag"] = indicator["value"].fillna(0).astype(int)
+    source_col = "value" if "value" in indicator.columns else indicator.columns[0]
+    indicator["flag"] = pd.to_numeric(indicator[source_col], errors="coerce").fillna(0).astype(int)
     starts: list[pd.Timestamp] = []
     ends: list[pd.Timestamp] = []
     in_recession = False
