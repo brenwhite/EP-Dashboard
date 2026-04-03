@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from html import escape
+import math
 import os
 from pathlib import Path
 import time
@@ -45,6 +46,8 @@ MACRO_DIAL_CONFIG = [
         "fred_units": "pc1",
         "title": "Inflation Backdrop",
         "suffix": "%",
+        "dial_min": 0.0,
+        "dial_max": 6.0,
         "regime_labels": ("Cooling", "Sticky", "Rising"),
         "description": "CPI year-over-year",
     },
@@ -53,6 +56,8 @@ MACRO_DIAL_CONFIG = [
         "fred_units": "lin",
         "title": "Rates Backdrop",
         "suffix": "%",
+        "dial_min": 0.0,
+        "dial_max": 6.0,
         "regime_labels": ("Supportive", "Neutral", "Restrictive"),
         "description": "10Y Treasury yield",
     },
@@ -61,6 +66,8 @@ MACRO_DIAL_CONFIG = [
         "fred_units": "lin",
         "title": "Credit Spreads",
         "suffix": "%",
+        "dial_min": 2.0,
+        "dial_max": 10.0,
         "regime_labels": ("Calm", "Cautious", "Stressed"),
         "description": "High-yield OAS",
     },
@@ -906,6 +913,58 @@ def build_factor_state_table(df: pd.DataFrame) -> str:
 
 
 def build_macro_cards(df: pd.DataFrame) -> str:
+    def point(cx: float, cy: float, radius: float, degrees: float) -> tuple[float, float]:
+        radians = math.radians(degrees)
+        return cx + radius * math.cos(radians), cy - radius * math.sin(radians)
+
+    def arc_path(cx: float, cy: float, radius: float, start_deg: float, end_deg: float) -> str:
+        x1, y1 = point(cx, cy, radius, start_deg)
+        x2, y2 = point(cx, cy, radius, end_deg)
+        return f"M {x1:.2f} {y1:.2f} A {radius:.2f} {radius:.2f} 0 0 0 {x2:.2f} {y2:.2f}"
+
+    def macro_gauge_svg(row: pd.Series) -> str:
+        cfg = next((item for item in MACRO_DIAL_CONFIG if item["title"] == row["Title"]), None)
+        if cfg is None or pd.isna(row["Latest"]):
+            return "<div class='macro-gauge-fallback'>&mdash;</div>"
+
+        min_val = float(cfg["dial_min"])
+        max_val = float(cfg["dial_max"])
+        value = float(np.clip(row["Latest"], min_val, max_val))
+        frac = 0.0 if max_val <= min_val else (value - min_val) / (max_val - min_val)
+        angle = 180.0 - 180.0 * frac
+
+        cx, cy = 160.0, 150.0
+        radius = 104.0
+        needle_radius = 82.0
+        arc = arc_path(cx, cy, radius, 180.0, 0.0)
+        nx, ny = point(cx, cy, needle_radius, angle)
+
+        tick_parts: list[str] = []
+        label_parts: list[str] = []
+        for i in range(7):
+            tfrac = i / 6.0
+            tick_angle = 180.0 - 180.0 * tfrac
+            inner_x, inner_y = point(cx, cy, radius - 11.0, tick_angle)
+            outer_x, outer_y = point(cx, cy, radius + 4.0, tick_angle)
+            tick_parts.append(
+                f"<line x1='{inner_x:.2f}' y1='{inner_y:.2f}' x2='{outer_x:.2f}' y2='{outer_y:.2f}' stroke='black' stroke-width='2' />"
+            )
+            label_x, label_y = point(cx, cy, radius + 24.0, tick_angle)
+            tick_val = min_val + tfrac * (max_val - min_val)
+            label_parts.append(
+                f"<text x='{label_x:.2f}' y='{label_y:.2f}' text-anchor='middle' dominant-baseline='middle' class='macro-tick-label'>{tick_val:.0f}{escape(str(cfg['suffix']))}</text>"
+            )
+
+        return (
+            "<svg viewBox='0 0 320 190' class='macro-gauge-svg' role='img' aria-label='Macro dial'>"
+            f"<path d='{arc}' fill='none' stroke='black' stroke-width='12' stroke-linecap='round' />"
+            f"{''.join(tick_parts)}"
+            f"{''.join(label_parts)}"
+            f"<line x1='{cx:.2f}' y1='{cy:.2f}' x2='{nx:.2f}' y2='{ny:.2f}' stroke='rgb(150, 140, 131)' stroke-width='7' stroke-linecap='round' />"
+            f"<circle cx='{cx:.2f}' cy='{cy:.2f}' r='10' fill='black' />"
+            "</svg>"
+        )
+
     cards: list[str] = []
     for _, row in df.iterrows():
         latest = "&mdash;" if pd.isna(row["Latest"]) else f'{row["Latest"]:.2f}{row["Suffix"]}'
@@ -914,6 +973,7 @@ def build_macro_cards(df: pd.DataFrame) -> str:
         cards.append(
             "<div class='macro-card'>"
             f"<div class='macro-title'>{escape(str(row['Title']))}</div>"
+            f"{macro_gauge_svg(row)}"
             f"<div class='macro-value'>{latest}</div>"
             f"<div class='macro-regime'>{escape(str(row['Regime']))}</div>"
             f"<div class='macro-meta'>{escape(str(row['Description']))}</div>"
@@ -1007,7 +1067,7 @@ def inject_css() -> None:
             padding: 0.95rem 1rem;
         }
         .summary-card .label {
-            color: rgb(150, 140, 131);
+            color: rgb(0, 0, 0);
             font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 0.08em;
@@ -1130,7 +1190,7 @@ def inject_css() -> None:
             box-shadow: 0 8px 24px rgba(150, 140, 131, 0.16);
         }
         .state-card .state-label {
-            color: rgb(150, 140, 131);
+            color: rgb(0, 0, 0);
             font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 0.08em;
@@ -1143,11 +1203,29 @@ def inject_css() -> None:
             line-height: 1.3;
         }
         .macro-title {
-            color: rgb(150, 140, 131);
+            color: rgb(0, 0, 0);
             font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 0.08em;
             margin-bottom: 0.45rem;
+        }
+        .macro-gauge-svg {
+            width: 100%;
+            height: auto;
+            display: block;
+            margin: 0.15rem 0 0.4rem 0;
+        }
+        .macro-gauge-fallback {
+            color: rgb(0, 0, 0);
+            font-size: 2rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 0.2rem 0 0.6rem 0;
+        }
+        .macro-tick-label {
+            fill: black;
+            font-size: 9px;
+            font-weight: 700;
         }
         .macro-value {
             color: rgb(0, 0, 0);
@@ -1162,7 +1240,7 @@ def inject_css() -> None:
             margin-bottom: 0.5rem;
         }
         .macro-meta {
-            color: rgb(150, 140, 131);
+            color: rgb(0, 0, 0);
             font-size: 0.9rem;
             line-height: 1.4;
         }
@@ -1281,56 +1359,4 @@ def main() -> None:
     with st.sidebar:
         st.header("Dashboard")
         dashboard_mode = st.radio("View", ["Curated Overview", "Full Universe", "State of the Market", "Macro Dashboard"], index=0)
-        search_label = "Search Factor" if dashboard_mode == "State of the Market" else "Search Ticker"
-        search_placeholder = "Market, Momentum, GoldPrice..." if dashboard_mode == "State of the Market" else "SPY, TLT, GLD..."
-        ticker_query = st.text_input(search_label, placeholder=search_placeholder)
-        if dashboard_mode == "Curated Overview":
-            selected_curated_classes = st.multiselect("Asset Class", options=curated_classes, default=curated_classes)
-            selected_universe_classes = universe_classes
-        else:
-            selected_curated_classes = curated_classes
-            if dashboard_mode == "Full Universe":
-                selected_universe_classes = st.multiselect("Universe Group", options=universe_classes, default=universe_classes)
-            else:
-                selected_universe_classes = universe_classes
-        st.caption("Dashboard data is loaded from local files plus the configured external macro/factor APIs.")
-
-    query_text = ticker_query.strip()
-
-    if dashboard_mode == "Curated Overview":
-        curated_selection = curated_base[curated_base[CURATED_CLASS_COL].isin(selected_curated_classes)].copy()
-        if query_text:
-            query = query_text.lower()
-            curated_selection = curated_selection[
-                curated_selection["Ticker"].str.lower().str.contains(query, na=False)
-                | curated_selection["Display_Name"].fillna("").str.lower().str.contains(query, na=False)
-                | curated_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
-            ]
-        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(curated_selection["Ticker"].dropna().unique().tolist())))
-        curated_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
-        curated_df = build_curated_frame(scored_df, curated_enrichment_df, template_df)
-        render_curated_dashboard(curated_df, selected_curated_classes, query_text)
-    elif dashboard_mode == "Full Universe":
-        universe_selection = universe_base[universe_base[FULL_UNIVERSE_GROUP_COL].isin(selected_universe_classes)].copy()
-        if query_text:
-            query = query_text.lower()
-            universe_selection = universe_selection[
-                universe_selection["Ticker"].str.lower().str.contains(query, na=False)
-                | universe_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
-            ]
-        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(universe_selection["Ticker"].dropna().unique().tolist())))
-        universe_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
-        universe_df = build_universe_frame(scored_df.merge(universe_enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
-        render_universe_dashboard(universe_df, selected_universe_classes, query_text)
-    elif dashboard_mode == "State of the Market":
-        render_state_market_dashboard(state_factor_df, query_text)
-    else:
-        render_macro_dashboard(macro_df)
-
-    st.caption(
-        "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
-    )
-
-
-if __name__ == "__main__":
-    main()
+        search_label = "Search Factor" if dashboard_mode == "State of the Market" els
