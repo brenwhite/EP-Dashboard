@@ -1070,8 +1070,8 @@ def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Char
             title=alt.TitleParams(
                 text=title,
                 subtitle=subtitle,
-                fontSize=21,
-                subtitleFontSize=14,
+                fontSize=14,
+                subtitleFontSize=11,
                 anchor="start",
                 dy=-8,
             ),
@@ -1107,7 +1107,7 @@ def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
     )
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_title(color="black")
-        .configure_axis(labelFontSize=14, titleColor="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
         .properties(background="rgb(210, 200, 191)")
     )
 
@@ -1117,8 +1117,8 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
     title = alt.TitleParams(
         text="Progressive Decel in Aggregate Income Growth",
         subtitle="Savings rate change vs wage growth and nominal PCE",
-        fontSize=21,
-        subtitleFontSize=14,
+        fontSize=16,
+        subtitleFontSize=11,
     )
     x_encoding = alt.X(
         "date:T",
