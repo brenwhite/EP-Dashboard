@@ -191,6 +191,14 @@ def safe_pct_series(series: pd.Series) -> pd.Series:
     return series
 
 
+def normalize_yield_series(series: pd.Series) -> pd.Series:
+    series = pd.to_numeric(series, errors="coerce")
+    med = series.abs().median(skipna=True)
+    if pd.notna(med) and med <= 1:
+        return series * 100.0
+    return series
+
+
 def flow_percentile_scores(df: pd.DataFrame, flow_col: str, tickers: list[str]) -> pd.Series:
     subset = df[df["Ticker"].isin(tickers)].copy()
     flows = pd.to_numeric(subset[flow_col], errors="coerce")
@@ -671,7 +679,7 @@ def build_file_enrichment(df: pd.DataFrame) -> pd.DataFrame:
     pe_forward_col = pick_optional_col(df, ["P/E (NTM)", "PE (NTM)", "P/E NTM", "PE_Forward"])
 
     out = pd.DataFrame({"Ticker": df["Ticker"]})
-    out["Yield"] = pd.to_numeric(df[yld_col], errors="coerce") if yld_col else np.nan
+    out["Yield"] = normalize_yield_series(df[yld_col]) if yld_col else np.nan
     out["PE_Trailing"] = pd.to_numeric(df[pe_trailing_col], errors="coerce") if pe_trailing_col else np.nan
     out["PE_Forward"] = pd.to_numeric(df[pe_forward_col], errors="coerce") if pe_forward_col else np.nan
     return out
@@ -1045,7 +1053,7 @@ def inject_css() -> None:
             text-transform: uppercase;
             padding: 0.8rem 0.85rem;
             border-bottom: 1px solid rgb(180, 170, 161);
-            text-align: left;
+            text-align: center;
             white-space: nowrap;
         }
         .market-table tbody td {
@@ -1054,11 +1062,12 @@ def inject_css() -> None:
             color: rgb(0, 0, 0);
             font-size: 0.92rem;
             vertical-align: middle;
+            text-align: center;
         }
         .market-table tbody tr:last-child td { border-bottom: none; }
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
-        .name { min-width: 250px; }
-        .num, .pe { text-align: right; white-space: nowrap; }
+        .name { min-width: 250px; text-align: left !important; }
+        .num, .pe { text-align: center; white-space: nowrap; }
         .signal-col { width: 110px; text-align: center; }
         .master { min-width: 185px; }
         .signal {
