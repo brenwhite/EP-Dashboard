@@ -1106,11 +1106,25 @@ def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
 
 def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
     chart_df = df.copy().dropna(how="all")
-    base = _base_labor_chart(
-        chart_df,
-        "Progressive Decel in Aggregate Income Growth",
-        "Savings rate change vs wage growth and nominal PCE",
+    title = alt.TitleParams(
+        text="Progressive Decel in Aggregate Income Growth",
+        subtitle="Savings rate change vs wage growth and nominal PCE",
+        fontSize=16,
+        subtitleFontSize=11,
     )
+    x_encoding = alt.X(
+        "date:T",
+        axis=alt.Axis(
+            title=None,
+            format="%b-%y",
+            labelAngle=-45,
+            labelColor="black",
+            tickColor="black",
+            domainColor="rgb(165, 155, 146)",
+            grid=False,
+        ),
+    )
+    base = alt.Chart(chart_df.reset_index().rename(columns={"index": "date"})).encode(x=x_encoding)
 
     bars = base.mark_bar(color="#ff2b1a", size=12).encode(
         y=alt.Y(
@@ -1143,40 +1157,24 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
         range=["#161616", "#a7a7a7"],
     )
 
-    lines = (
-        alt.Chart(line_data)
-        .mark_line(strokeWidth=3)
-        .encode(
-            x=alt.X(
-                "date:T",
-                axis=alt.Axis(
-                    title=None,
-                    format="%b-%y",
-                    labelAngle=-45,
-                    labelColor="black",
-                    tickColor="black",
-                    domainColor="rgb(165, 155, 146)",
-                    grid=False,
-                ),
-            ),
-            y=alt.Y(
-                "value:Q",
-                axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
-                scale=alt.Scale(zero=False),
-            ),
-            color=alt.Color("series:N", scale=color_scale, legend=alt.Legend(title=None, orient="top")),
-        )
-        .properties(height=360, background="rgb(210, 200, 191)")
+    lines = alt.Chart(line_data).mark_line(strokeWidth=3).encode(
+        x=x_encoding,
+        y=alt.Y(
+            "value:Q",
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            scale=alt.Scale(zero=False),
+        ),
+        color=alt.Color("series:N", scale=color_scale, legend=alt.Legend(title=None, orient="top")),
     )
 
     return (
         alt.layer(lines, bars)
         .resolve_scale(y="independent")
+        .properties(height=360, title=title, background="rgb(210, 200, 191)")
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
         .configure_legend(labelColor="black", titleColor="black")
-        .properties(background="rgb(210, 200, 191)")
     )
 
 
