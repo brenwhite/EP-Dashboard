@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from urllib.parse import quote
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import requests
@@ -50,7 +51,7 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 6.0,
         "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Cooling", "Sticky", "Rising"),
-        "description": "CPI Year-Over-Year",
+        "description": "CPI year-over-year",
     },
     {
         "series_id": "DGS10",
@@ -61,7 +62,7 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 6.0,
         "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Supportive", "Neutral", "Restrictive"),
-        "description": "10Y Treasury Yield",
+        "description": "10Y Treasury yield",
     },
     {
         "series_id": "BAMLH0A0HYM2",
@@ -72,9 +73,31 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 10.0,
         "tick_values": [2, 4, 6, 8, 10],
         "regime_labels": ("Calm", "Cautious", "Stressed"),
-        "description": "High-Yield OAS",
+        "description": "High-yield OAS",
     },
 ]
+
+LABOR_CHART_CONFIG = {
+    "nfp": {
+        "title": "Employment Growth Converging to Zero",
+        "subtitle": "NFP, Y/Y %",
+        "series": {"PAYEMS": "Total Nonfarm Payrolls"},
+    },
+    "income_vs_consumption": {
+        "title": "Income Growth vs Consumption Growth",
+        "subtitle": "Savings, Wage Growth, and PCE",
+        "series": {
+            "PSAVERT": "Personal Savings Rate",
+            "A576RC1": "Wage & Salary Growth",
+            "PCE": "PCE Nominal",
+        },
+    },
+    "real_income": {
+        "title": "Real Disposable Income Cushion",
+        "subtitle": "Real Disposable Personal Income, Y/Y %",
+        "series": {"DSPIC96": "Real Disposable Personal Income"},
+    },
+}
 
 BASIC_STATE_FACTORS = [
     "OilPrice",
@@ -425,6 +448,54 @@ def fetch_macro_backdrop() -> pd.DataFrame:
             )
 
     return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_macro_labor_panels() -> dict[str, object]:
+    api_key = get_fred_api_key()
+    if not api_key:
+        return {"panels": {}, "errors": {"all": "Missing FRED API key."}}
+
+    panels: dict[str, pd.DataFrame] = {}
+    errors: dict[str, str] = {}
+
+    try:
+        nfp = resample_to_monthly_last(fred_series_observations("PAYEMS", api_key=api_key, units="pc1"))
+        nfp = nfp.rename(columns={"value": "nfp_yoy"})
+        nfp = nfp.loc[nfp.index >= pd.Timestamp("2022-01-01")]
+        panels["nfp"] = nfp
+    except Exception as exc:
+        errors["nfp"] = f"PAYEMS unavailable: {exc}"
+
+    try:
+        savings = resample_to_monthly_last(fred_series_observations("PSAVERT", api_key=api_key, units="lin"))
+        savings = savings.rename(columns={"value": "savings_rate"})
+        savings["savings_yoy_change"] = savings["savings_rate"].diff(12)
+
+        wages = resample_to_monthly_last(fred_series_observations("A576RC1", api_key=api_key, units="pc1"))
+        wages = wages.rename(columns={"value": "wage_growth_yoy"})
+
+        pce = resample_to_monthly_last(fred_series_observations("PCE", api_key=api_key, units="pc1"))
+        pce = pce.rename(columns={"value": "pce_growth_yoy"})
+
+        income_vs_consumption = savings[["savings_yoy_change"]].join(wages[["wage_growth_yoy"]], how="outer").join(
+            pce[["pce_growth_yoy"]], how="outer"
+        )
+        income_vs_consumption = income_vs_consumption.dropna(how="all")
+        income_vs_consumption = income_vs_consumption.loc[income_vs_consumption.index >= pd.Timestamp("2024-01-01")]
+        panels["income_vs_consumption"] = income_vs_consumption
+    except Exception as exc:
+        errors["income_vs_consumption"] = f"PSAVERT/A576RC1/PCE unavailable: {exc}"
+
+    try:
+        real_income = resample_to_monthly_last(fred_series_observations("DSPIC96", api_key=api_key, units="pc1"))
+        real_income = real_income.rename(columns={"value": "real_income_yoy"})
+        real_income = real_income.loc[real_income.index >= pd.Timestamp("2023-01-01")]
+        panels["real_income"] = real_income
+    except Exception as exc:
+        errors["real_income"] = f"DSPIC96 unavailable: {exc}"
+
+    return {"panels": panels, "errors": errors}
 
 
 def factor_api_get_json(path: str, timeout: int = 30) -> dict:
@@ -985,9 +1056,189 @@ def build_macro_cards(df: pd.DataFrame) -> str:
             f"<div class='macro-regime'>{escape(str(row['Regime']))}</div>"
             f"<div class='macro-meta'>{escape(str(row['Description']))}</div>"
             f"<div class='macro-meta'>10Y Z-Score: {z_text}</div>"
+            f"<div class='macro-meta'>As of {as_of}</div>"
             "</div>"
         )
     return f"<div class='macro-grid'>{''.join(cards)}</div>"
+
+
+def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Chart:
+    return (
+        alt.Chart(data.reset_index().rename(columns={"index": "date"}))
+        .properties(height=360, title=alt.TitleParams(text=title, subtitle=subtitle, fontSize=16, subtitleFontSize=11))
+        .encode(
+            x=alt.X(
+                "date:T",
+                axis=alt.Axis(
+                    title=None,
+                    format="%b-%y",
+                    labelAngle=-90,
+                    labelColor="black",
+                    tickColor="black",
+                    domainColor="rgb(165, 155, 146)",
+                    grid=False,
+                ),
+            )
+        )
+    )
+
+
+def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
+    chart_df = df.copy().dropna(subset=["nfp_yoy"])
+    chart_df["trend"] = np.polyval(np.polyfit(np.arange(len(chart_df)), chart_df["nfp_yoy"], 1), np.arange(len(chart_df)))
+    base = _base_labor_chart(chart_df, "Employment Growth Converging to Zero", "NFP, Y/Y %")
+    line = base.mark_line(color="#2f3134", strokeWidth=4).encode(
+        y=alt.Y(
+            "nfp_yoy:Q",
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            scale=alt.Scale(zero=False),
+        )
+    )
+    trend = base.mark_line(color="#d53d32", strokeWidth=2).encode(y="trend:Q")
+    return (
+        (line + trend)
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+        .properties(background="rgb(210, 200, 191)")
+    )
+
+
+def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
+    chart_df = df.copy().dropna(how="all")
+    base = _base_labor_chart(
+        chart_df,
+        "Progressive Decel in Aggregate Income Growth",
+        "Savings rate change vs wage growth and nominal PCE",
+    )
+
+    bars = base.mark_bar(color="#ff2b1a", size=12).encode(
+        y=alt.Y(
+            "savings_yoy_change:Q",
+            axis=alt.Axis(
+                title=None,
+                orient="right",
+                labelColor="#d53d32",
+                tickColor="#d53d32",
+                domainColor="#d53d32",
+                grid=False,
+            ),
+        )
+    )
+
+    line_data = chart_df.reset_index().rename(columns={"index": "date"}).melt(
+        id_vars="date",
+        value_vars=["wage_growth_yoy", "pce_growth_yoy"],
+        var_name="series",
+        value_name="value",
+    )
+    line_data["series"] = line_data["series"].map(
+        {
+            "wage_growth_yoy": "Wage & Salary Growth, Y/Y %",
+            "pce_growth_yoy": "PCE, Y/Y % Nominal",
+        }
+    )
+    color_scale = alt.Scale(
+        domain=["Wage & Salary Growth, Y/Y %", "PCE, Y/Y % Nominal"],
+        range=["#161616", "#a7a7a7"],
+    )
+
+    lines = (
+        alt.Chart(line_data)
+        .mark_line(strokeWidth=3)
+        .encode(
+            x=alt.X(
+                "date:T",
+                axis=alt.Axis(
+                    title=None,
+                    format="%b-%y",
+                    labelAngle=-45,
+                    labelColor="black",
+                    tickColor="black",
+                    domainColor="rgb(165, 155, 146)",
+                    grid=False,
+                ),
+            ),
+            y=alt.Y(
+                "value:Q",
+                axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+                scale=alt.Scale(zero=False),
+            ),
+            color=alt.Color("series:N", scale=color_scale, legend=alt.Legend(title=None, orient="top")),
+        )
+        .properties(height=360, background="rgb(210, 200, 191)")
+    )
+
+    return (
+        alt.layer(lines, bars)
+        .resolve_scale(y="independent")
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+        .configure_legend(labelColor="black", titleColor="black")
+        .properties(background="rgb(210, 200, 191)")
+    )
+
+
+def build_real_income_chart(df: pd.DataFrame) -> alt.Chart:
+    chart_df = df.copy().dropna(subset=["real_income_yoy"])
+    chart_df["trend"] = np.polyval(
+        np.polyfit(np.arange(len(chart_df)), chart_df["real_income_yoy"], 1),
+        np.arange(len(chart_df)),
+    )
+    base = _base_labor_chart(
+        chart_df,
+        "Real Disposable Income Just Above 1%",
+        "Real Disposable Personal Income, Y/Y %",
+    )
+    line = base.mark_line(color="#2f3134", strokeWidth=4).encode(
+        y=alt.Y(
+            "real_income_yoy:Q",
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            scale=alt.Scale(zero=False),
+        )
+    )
+    trend = base.mark_line(color="#d53d32", strokeWidth=2).encode(y="trend:Q")
+    return (
+        (line + trend)
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+        .properties(background="rgb(210, 200, 191)")
+    )
+
+
+def render_labor_section(labor_payload: dict[str, object]) -> None:
+    panels = labor_payload.get("panels", {})
+    errors = labor_payload.get("errors", {})
+
+    st.markdown(
+        """
+        <section class="group-block">
+            <div class="group-header">Labor: The Quad3 Chokepoint</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    chart_builders = {
+        "nfp": build_nfp_chart,
+        "income_vs_consumption": build_income_vs_consumption_chart,
+        "real_income": build_real_income_chart,
+    }
+
+    cols = st.columns(3)
+    for col, key in zip(cols, ["nfp", "income_vs_consumption", "real_income"]):
+        with col:
+            panel_df = panels.get(key)
+            if isinstance(panel_df, pd.DataFrame) and not panel_df.empty:
+                st.altair_chart(chart_builders[key](panel_df), use_container_width=True)
+            else:
+                st.info(errors.get(key, f"{key} data could not be loaded from FRED."))
+
+    if errors:
+        missing = " | ".join(str(msg) for msg in errors.values())
+        st.caption(f"Missing or unavailable FRED labor series: {missing}")
 
 
 def build_curated_table(group_name: str, group_df: pd.DataFrame) -> str:
@@ -1312,7 +1563,7 @@ def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) ->
     st.markdown(build_factor_state_table(filtered), unsafe_allow_html=True)
 
 
-def render_macro_dashboard(macro_df: pd.DataFrame) -> None:
+def render_macro_dashboard(macro_df: pd.DataFrame, labor_payload: dict[str, object]) -> None:
     if macro_df.empty:
         st.info("Add `FRED_API_KEY` to `st.secrets` or your environment to load the macro dashboard.")
         return
@@ -1322,6 +1573,7 @@ def render_macro_dashboard(macro_df: pd.DataFrame) -> None:
     st.markdown(build_macro_cards(macro_df), unsafe_allow_html=True)
     if not available:
         st.warning("FRED data could not be loaded for the configured series. Check the API key, network access, or any series-processing errors shown on the cards.")
+    render_labor_section(labor_payload)
 
 
 def main() -> None:
@@ -1355,6 +1607,7 @@ def main() -> None:
     except Exception:
         state_factor_df = pd.DataFrame()
     macro_df = fetch_macro_backdrop()
+    labor_payload = fetch_macro_labor_panels()
     universe_base = scored_df.merge(file_enrichment_df, on="Ticker", how="left").merge(full_universe_schema_df, on="Ticker", how="left")
     universe_base[FULL_UNIVERSE_GROUP_COL] = universe_base[FULL_UNIVERSE_GROUP_COL].fillna("Other/Unmapped")
     curated_base = template_df.merge(scored_df, on="Ticker", how="left", suffixes=("", "_csv")).merge(file_enrichment_df, on="Ticker", how="left")
@@ -1413,7 +1666,7 @@ def main() -> None:
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
-        render_macro_dashboard(macro_df)
+        render_macro_dashboard(macro_df, labor_payload)
 
     st.caption(
         "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
