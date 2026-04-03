@@ -4,16 +4,13 @@ from datetime import date
 from html import escape
 import os
 from pathlib import Path
+import time
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-
-try:
-    import yfinance as yf
-except ImportError:  # pragma: no cover
-    yf = None
 
 
 st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_chart:", layout="wide")
@@ -234,6 +231,13 @@ def pick_first_existing(df: pd.DataFrame, candidates: list[str]) -> str:
     raise ValueError(f"Missing required column. Expected one of: {candidates}")
 
 
+def pick_optional_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    return None
+
+
 def parse_pe_string(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
@@ -291,38 +295,6 @@ def regime_indicator(regime: str) -> str:
     if regime in {"Strong Bear", "Bear"}:
         return '<span class="signal bear">&#8595;</span>'
     return '<span class="signal neutral">&#8599;</span>'
-
-
-def extract_info_value(payload: object, keys: list[str]) -> float | None:
-    if payload is None:
-        return None
-    if isinstance(payload, dict):
-        for key in keys:
-            value = payload.get(key)
-            if value is not None and not pd.isna(value):
-                return value
-        return None
-    for key in keys:
-        if hasattr(payload, key):
-            value = getattr(payload, key)
-            if value is not None and not pd.isna(value):
-                return value
-    for attr in ("_asdict", "to_dict"):
-        if hasattr(payload, attr):
-            try:
-                nested = getattr(payload, attr)()
-            except TypeError:
-                continue
-            value = extract_info_value(nested, keys)
-            if value is not None:
-                return value
-    return None
-
-
-def normalize_yield_to_percent(value: float | None) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    return float(value * 100) if abs(value) <= 1 else float(value)
 
 
 def get_fred_api_key() -> str | None:
@@ -453,6 +425,62 @@ def factor_api_get_json(path: str, timeout: int = 30) -> dict:
     if last_error is None:
         raise RuntimeError(f"Unable to fetch factor API path: {path}")
     raise RuntimeError(f"Factor API request failed for {path}: {last_error}")
+
+
+def calculate_period_return_from_history(history: pd.DataFrame, anchor_date: pd.Timestamp) -> float | None:
+    if history.empty:
+        return None
+    eligible = history.loc[history.index >= anchor_date, "close"].dropna()
+    closes = history["close"].dropna()
+    if closes.empty or eligible.empty:
+        return None
+    start_price = eligible.iloc[0]
+    end_price = closes.iloc[-1]
+    if pd.isna(start_price) or pd.isna(end_price) or start_price == 0:
+        return None
+    return float((end_price / start_price) - 1)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_stock_history_frame(ticker: str, days: int = 2000) -> pd.DataFrame:
+    payload = factor_api_get_json(f"/api/stock-history/{quote(ticker)}?days={days}", timeout=30)
+    records = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list) or not records:
+        return pd.DataFrame(columns=["close"])
+
+    df = pd.DataFrame(records)
+    if "date" not in df.columns or "close" not in df.columns:
+        return pd.DataFrame(columns=["close"])
+    df["date"] = pd.to_datetime(df["date"])
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["date", "close"]).set_index("date").sort_index()
+    return df[["close"]]
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_factorstoday_stock_returns(tickers: tuple[str, ...]) -> pd.DataFrame:
+    rows: list[dict[str, float | str | None]] = []
+    if not tickers:
+        return pd.DataFrame(columns=["Ticker", "YTD_Return", "Return_1Y", "Return_3Y", "Return_5Y"])
+
+    today = pd.Timestamp.today().normalize()
+    anchors = {
+        "YTD_Return": pd.Timestamp(date(today.year, 1, 1)),
+        "Return_1Y": today - pd.DateOffset(years=1),
+        "Return_3Y": today - pd.DateOffset(years=3),
+        "Return_5Y": today - pd.DateOffset(years=5),
+    }
+
+    for idx, ticker in enumerate(tickers):
+        history = fetch_stock_history_frame(ticker)
+        row: dict[str, float | str | None] = {"Ticker": ticker}
+        for field, anchor in anchors.items():
+            row[field] = calculate_period_return_from_history(history, anchor)
+        rows.append(row)
+        if idx < len(tickers) - 1:
+            time.sleep(0.11)
+
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -610,86 +638,6 @@ def compute_factor_signal_frame(return_panel: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def get_close_frame(history: pd.DataFrame) -> pd.DataFrame:
-    if history.empty:
-        return pd.DataFrame()
-    if isinstance(history.columns, pd.MultiIndex):
-        if "Close" not in history.columns.get_level_values(0):
-            return pd.DataFrame()
-        close = history["Close"].copy()
-        if isinstance(close, pd.Series):
-            close = close.to_frame()
-        return close
-    if "Close" in history.columns:
-        return history[["Close"]].rename(columns={"Close": "SINGLE"})
-    return pd.DataFrame()
-
-
-def calculate_period_return(closes: pd.Series, anchor_date: pd.Timestamp) -> float | None:
-    closes = closes.dropna()
-    if closes.empty:
-        return None
-    eligible = closes[closes.index >= anchor_date]
-    if eligible.empty:
-        return None
-    start_price = eligible.iloc[0]
-    end_price = closes.iloc[-1]
-    if pd.isna(start_price) or pd.isna(end_price) or start_price == 0:
-        return None
-    return float((end_price / start_price) - 1)
-
-
-def compute_live_return_maps(tickers: list[str]) -> dict[str, dict[str, float | None]]:
-    horizons = ("YTD_Return", "Return_1Y", "Return_3Y", "Return_5Y")
-    empty = {ticker: {h: None for h in horizons} for ticker in tickers}
-    if yf is None or not tickers:
-        return empty
-
-    today = pd.Timestamp.today().normalize()
-    start = date(today.year - 6, 1, 1)
-    try:
-        history = yf.download(
-            tickers=tickers,
-            start=start,
-            auto_adjust=True,
-            progress=False,
-            group_by="column",
-            threads=True,
-        )
-    except Exception:
-        return empty
-
-    close_frame = get_close_frame(history)
-    if close_frame.empty:
-        return empty
-
-    anchor_map = {
-        "YTD_Return": pd.Timestamp(date(today.year, 1, 1)),
-        "Return_1Y": today - pd.DateOffset(years=1),
-        "Return_3Y": today - pd.DateOffset(years=3),
-        "Return_5Y": today - pd.DateOffset(years=5),
-    }
-
-    results = empty.copy()
-    if list(close_frame.columns) == ["SINGLE"] and len(tickers) == 1:
-        single_closes = close_frame["SINGLE"]
-        results[tickers[0]] = {
-            horizon: calculate_period_return(single_closes, anchor)
-            for horizon, anchor in anchor_map.items()
-        }
-        return results
-
-    for ticker in tickers:
-        if ticker not in close_frame.columns:
-            continue
-        ticker_closes = close_frame[ticker]
-        results[ticker] = {
-            horizon: calculate_period_return(ticker_closes, anchor)
-            for horizon, anchor in anchor_map.items()
-        }
-    return results
-
-
 @st.cache_data(show_spinner=False)
 def load_market_data(csv_name: str) -> pd.DataFrame:
     csv_path = Path(__file__).resolve().parent / csv_name
@@ -714,6 +662,19 @@ def load_market_data(csv_name: str) -> pd.DataFrame:
         if column in df.columns:
             df[column] = safe_pct_series(df[column])
     return df
+
+
+@st.cache_data(show_spinner=False)
+def build_file_enrichment(df: pd.DataFrame) -> pd.DataFrame:
+    yld_col = pick_optional_col(df, ["Yield", "Yield (%)", "30-Day SEC Yield", "SEC Yield", "30-Day SEC Yield (%)"])
+    pe_trailing_col = pick_optional_col(df, ["P/E (LTM)", "PE (LTM)", "P/E LTM", "PE_Trailing"])
+    pe_forward_col = pick_optional_col(df, ["P/E (NTM)", "PE (NTM)", "P/E NTM", "PE_Forward"])
+
+    out = pd.DataFrame({"Ticker": df["Ticker"]})
+    out["Yield"] = pd.to_numeric(df[yld_col], errors="coerce") if yld_col else np.nan
+    out["PE_Trailing"] = pd.to_numeric(df[pe_trailing_col], errors="coerce") if pe_trailing_col else np.nan
+    out["PE_Forward"] = pd.to_numeric(df[pe_forward_col], errors="coerce") if pe_forward_col else np.nan
+    return out
 
 
 @st.cache_data(show_spinner=False)
@@ -837,96 +798,6 @@ def compute_classification_scores(df_scored: pd.DataFrame) -> pd.DataFrame:
     output = output.reset_index().rename(columns={CLASS_COL: "Classification"})
     output["Regime"] = output["Master_Score"].apply(regime_from_score)
     return output.sort_values("Master_Score", ascending=False).reset_index(drop=True)
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_yfinance_enrichment(tickers: list[str]) -> pd.DataFrame:
-    columns = ["Ticker", "Yield", "PE_Trailing", "PE_Forward", "YTD_Return", "Return_1Y", "Return_3Y", "Return_5Y"]
-    if not tickers:
-        return pd.DataFrame(columns=columns)
-    if yf is None:
-        return pd.DataFrame(
-            {
-                "Ticker": tickers,
-                "Yield": [None] * len(tickers),
-                "PE_Trailing": [None] * len(tickers),
-                "PE_Forward": [None] * len(tickers),
-                "YTD_Return": [None] * len(tickers),
-                "Return_1Y": [None] * len(tickers),
-                "Return_3Y": [None] * len(tickers),
-                "Return_5Y": [None] * len(tickers),
-            }
-        )
-
-    return_map = compute_live_return_maps(tickers)
-    rows: list[dict[str, float | str | None]] = []
-    yield_keys = ["secYield", "secYieldPct", "yield", "yieldPct", "trailingAnnualDividendYield", "dividendYield"]
-    pe_trailing_keys = ["trailingPE", "trailingPe", "peRatio"]
-    pe_forward_keys = ["forwardPE", "forwardPe", "forwardPE1Yr"]
-    price_keys = ["currentPrice", "regularMarketPrice", "lastPrice"]
-    forward_eps_keys = ["forwardEps", "forwardEpsCurrentYear"]
-
-    for ticker in tickers:
-        sec_yield = None
-        trailing_pe = None
-        forward_pe = None
-        ticker_obj = None
-        basic_info = {}
-        try:
-            ticker_obj = yf.Ticker(ticker)
-            info = ticker_obj.get_info()
-        except Exception:
-            try:
-                info = ticker_obj.info if ticker_obj is not None else {}
-            except Exception:
-                info = {}
-        try:
-            funds_data = getattr(ticker_obj, "funds_data", None)
-        except Exception:
-            funds_data = None
-
-        sec_yield = extract_info_value(info, yield_keys)
-        if sec_yield is None:
-            sec_yield = extract_info_value(funds_data, yield_keys)
-        trailing_pe = extract_info_value(info, pe_trailing_keys)
-        if trailing_pe is None:
-            trailing_pe = extract_info_value(funds_data, pe_trailing_keys)
-        forward_pe = extract_info_value(info, pe_forward_keys)
-        if forward_pe is None:
-            forward_pe = extract_info_value(funds_data, pe_forward_keys)
-        if forward_pe is None:
-            try:
-                basic_info = ticker_obj.basic_info if ticker_obj is not None else {}
-            except Exception:
-                basic_info = {}
-            forward_pe = extract_info_value(basic_info, pe_forward_keys)
-        if forward_pe is None:
-            current_price = first_valid(
-                extract_info_value(info, price_keys),
-                extract_info_value(basic_info, price_keys),
-            )
-            forward_eps = first_valid(
-                extract_info_value(info, forward_eps_keys),
-                extract_info_value(basic_info, forward_eps_keys),
-            )
-            if current_price is not None and forward_eps not in (None, 0) and not pd.isna(forward_eps):
-                forward_pe = float(current_price) / float(forward_eps)
-        if forward_pe is not None and trailing_pe is not None and forward_pe > 1000:
-            forward_pe = None
-
-        rows.append(
-            {
-                "Ticker": ticker,
-                "Yield": normalize_yield_to_percent(sec_yield),
-                "PE_Trailing": None if trailing_pe is None or pd.isna(trailing_pe) else float(trailing_pe),
-                "PE_Forward": None if forward_pe is None or pd.isna(forward_pe) else float(forward_pe),
-                "YTD_Return": return_map.get(ticker, {}).get("YTD_Return"),
-                "Return_1Y": return_map.get(ticker, {}).get("Return_1Y"),
-                "Return_3Y": return_map.get(ticker, {}).get("Return_3Y"),
-                "Return_5Y": return_map.get(ticker, {}).get("Return_5Y"),
-            }
-        )
-    return pd.DataFrame(rows, columns=columns)
 
 
 def build_universe_frame(df: pd.DataFrame, schema_df: pd.DataFrame) -> pd.DataFrame:
@@ -1182,12 +1053,12 @@ def inject_css() -> None:
             border-bottom: 1px solid rgb(195, 185, 176);
             color: rgb(0, 0, 0);
             font-size: 0.92rem;
-            vertical-align: center;
+            vertical-align: middle;
         }
         .market-table tbody tr:last-child td { border-bottom: none; }
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
         .name { min-width: 250px; }
-        .num, .pe { text-align: center; white-space: nowrap; }
+        .num, .pe { text-align: right; white-space: nowrap; }
         .signal-col { width: 110px; text-align: center; }
         .master { min-width: 185px; }
         .signal {
@@ -1222,7 +1093,7 @@ def inject_css() -> None:
             border-radius: inherit;
             background: linear-gradient(90deg, #ba553f 0%, #d2a04c 48%, #2f8a57 100%);
         }
-        .score-label { min-width: 38px; text-align: center; font-weight: 700; color: rgb(0, 0, 0); }
+        .score-label { min-width: 38px; text-align: right; font-weight: 700; color: rgb(0, 0, 0); }
         .state-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1376,6 +1247,7 @@ def main() -> None:
     template_df = load_curated_template()
     full_universe_schema_df = load_full_universe_schema(FULL_UNIVERSE_SCHEMA_FILENAME)
     scored_df = compute_market_scores(raw_df)
+    file_enrichment_df = build_file_enrichment(raw_df)
     try:
         factor_historic_df = fetch_factor_historic_snapshot()
         factor_return_panel = fetch_factor_daily_return_panel()
@@ -1390,12 +1262,12 @@ def main() -> None:
     except Exception:
         state_factor_df = pd.DataFrame()
     macro_df = fetch_macro_backdrop()
-    enrichment_df = fetch_yfinance_enrichment(scored_df["Ticker"].dropna().unique().tolist())
-    universe_df = build_universe_frame(scored_df.merge(enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
-    curated_df = build_curated_frame(scored_df, enrichment_df, template_df)
+    universe_base = scored_df.merge(file_enrichment_df, on="Ticker", how="left").merge(full_universe_schema_df, on="Ticker", how="left")
+    universe_base[FULL_UNIVERSE_GROUP_COL] = universe_base[FULL_UNIVERSE_GROUP_COL].fillna("Other/Unmapped")
+    curated_base = template_df.merge(scored_df, on="Ticker", how="left", suffixes=("", "_csv")).merge(file_enrichment_df, on="Ticker", how="left")
 
     curated_classes = template_df[CURATED_CLASS_COL].dropna().drop_duplicates().tolist()
-    universe_classes = universe_df[FULL_UNIVERSE_GROUP_COL].dropna().drop_duplicates().tolist()
+    universe_classes = universe_base[FULL_UNIVERSE_GROUP_COL].dropna().drop_duplicates().tolist()
 
     with st.sidebar:
         st.header("Dashboard")
@@ -1412,24 +1284,42 @@ def main() -> None:
                 selected_universe_classes = st.multiselect("Universe Group", options=universe_classes, default=universe_classes)
             else:
                 selected_universe_classes = universe_classes
-        st.caption("Live enrichments are cached for 60 minutes via st.cache_data for Streamlit Community Cloud.")
+        st.caption("Dashboard data is loaded from local files plus the configured external macro/factor APIs.")
 
-    if yf is None:
-        st.warning(
-            "yfinance is not installed in this local environment. The dashboard will still render from local files, but live Yield, P/E, and YTD enrichments will stay blank."
-        )
+    query_text = ticker_query.strip()
 
     if dashboard_mode == "Curated Overview":
-        render_curated_dashboard(curated_df, selected_curated_classes, ticker_query.strip())
+        curated_selection = curated_base[curated_base[CURATED_CLASS_COL].isin(selected_curated_classes)].copy()
+        if query_text:
+            query = query_text.lower()
+            curated_selection = curated_selection[
+                curated_selection["Ticker"].str.lower().str.contains(query, na=False)
+                | curated_selection["Display_Name"].fillna("").str.lower().str.contains(query, na=False)
+                | curated_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
+            ]
+        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(curated_selection["Ticker"].dropna().unique().tolist())))
+        curated_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
+        curated_df = build_curated_frame(scored_df, curated_enrichment_df, template_df)
+        render_curated_dashboard(curated_df, selected_curated_classes, query_text)
     elif dashboard_mode == "Full Universe":
-        render_universe_dashboard(universe_df, selected_universe_classes, ticker_query.strip())
+        universe_selection = universe_base[universe_base[FULL_UNIVERSE_GROUP_COL].isin(selected_universe_classes)].copy()
+        if query_text:
+            query = query_text.lower()
+            universe_selection = universe_selection[
+                universe_selection["Ticker"].str.lower().str.contains(query, na=False)
+                | universe_selection["Name"].fillna("").str.lower().str.contains(query, na=False)
+            ]
+        returns_df = fetch_factorstoday_stock_returns(tuple(sorted(universe_selection["Ticker"].dropna().unique().tolist())))
+        universe_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
+        universe_df = build_universe_frame(scored_df.merge(universe_enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
+        render_universe_dashboard(universe_df, selected_universe_classes, query_text)
     elif dashboard_mode == "State of the Market":
-        render_state_market_dashboard(state_factor_df, ticker_query.strip())
+        render_state_market_dashboard(state_factor_df, query_text)
     else:
         render_macro_dashboard(macro_df)
 
     st.caption(
-        "Signal arrows and market-state classifications come from the proprietary regime score. Live returns, Yield, and P/E depend on yfinance coverage for each ticker."
+        "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
     )
 
 
