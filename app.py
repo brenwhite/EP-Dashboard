@@ -20,8 +20,10 @@ st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_c
 
 
 CSV_FILENAME = "data.csv"
-CLASS_COL = "Class"
+FULL_UNIVERSE_SCHEMA_FILENAME = "full_universe_schema.csv"
+CLASS_COL = "Classification"
 CURATED_CLASS_COL = "Asset Class"
+FULL_UNIVERSE_GROUP_COL = "Full Universe Group"
 
 W_TREND = 0.40
 W_MOM = 0.30
@@ -744,6 +746,19 @@ def load_curated_template() -> pd.DataFrame:
     ]
 
 
+@st.cache_data(show_spinner=False)
+def load_full_universe_schema(csv_name: str) -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Missing full universe schema file: {csv_path}")
+    df = pd.read_csv(csv_path)
+    required = {"Ticker", "Full_Universe_Group"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Full universe schema missing columns: {sorted(missing)}")
+    return df.rename(columns={"Full_Universe_Group": FULL_UNIVERSE_GROUP_COL})
+
+
 def compute_market_scores(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
     tickers = sorted(data["Ticker"].dropna().unique().tolist())
@@ -819,7 +834,7 @@ def compute_classification_scores(df_scored: pd.DataFrame) -> pd.DataFrame:
         + W_RISK * output["Risk_Score"]
         + W_PART * output["Participation_Score"]
     )
-    output = output.reset_index().rename(columns={CLASS_COL: "Class"})
+    output = output.reset_index().rename(columns={CLASS_COL: "Classification"})
     output["Regime"] = output["Master_Score"].apply(regime_from_score)
     return output.sort_values("Master_Score", ascending=False).reset_index(drop=True)
 
@@ -914,8 +929,9 @@ def fetch_yfinance_enrichment(tickers: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def build_universe_frame(df: pd.DataFrame) -> pd.DataFrame:
-    view = df.copy()
+def build_universe_frame(df: pd.DataFrame, schema_df: pd.DataFrame) -> pd.DataFrame:
+    view = df.merge(schema_df, on="Ticker", how="left").copy()
+    view[FULL_UNIVERSE_GROUP_COL] = view[FULL_UNIVERSE_GROUP_COL].fillna("Other/Unmapped")
     view["Yield_Display"] = view["Yield"].apply(lambda value: format_percent(value, decimals=2))
     view["YTD_Display"] = view["YTD_Return"].apply(format_percent_from_decimal)
     view["Return_1Y_Display"] = view["Return_1Y"].apply(format_percent_from_decimal)
@@ -1098,7 +1114,7 @@ def inject_css() -> None:
             box-shadow: 0 10px 30px rgba(150, 140, 131, 0.18);
         }
         .hero h1 { margin: 0; color: rgb(0, 0, 0); font-size: 2rem; font-weight: 700; letter-spacing: 0.01em; }
-        .hero p { margin: 0.5rem 0 0 0; color: rgb(0, 0, 0); font-size: 0.98rem; }
+        .hero p { margin: 0.5rem 0 0 0; color: rgb(150, 140, 131); font-size: 0.98rem; }
         .summary-strip {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1300,19 +1316,19 @@ def render_curated_dashboard(curated_df: pd.DataFrame, selected_classes: list[st
 
 
 def render_universe_dashboard(universe_df: pd.DataFrame, selected_classes: list[str], ticker_query: str) -> None:
-    filtered = universe_df[universe_df[CLASS_COL].isin(selected_classes)].copy()
+    filtered = universe_df[universe_df[FULL_UNIVERSE_GROUP_COL].isin(selected_classes)].copy()
     if ticker_query:
         query = ticker_query.lower()
         filtered = filtered[
             filtered["Ticker"].str.lower().str.contains(query, na=False)
             | filtered["Name"].fillna("").str.lower().str.contains(query, na=False)
         ]
-    filtered = filtered.sort_values([CLASS_COL, "Master_Score", "Ticker"], ascending=[True, False, True])
+    filtered = filtered.sort_values([FULL_UNIVERSE_GROUP_COL, "Master_Score", "Ticker"], ascending=[True, False, True])
     if filtered.empty:
         st.info("No assets match the current filters.")
         return
     for group_name in selected_classes:
-        group = filtered[filtered[CLASS_COL] == group_name]
+        group = filtered[filtered[FULL_UNIVERSE_GROUP_COL] == group_name]
         if not group.empty:
             st.markdown(build_universe_table(group_name, group), unsafe_allow_html=True)
 
@@ -1358,6 +1374,7 @@ def main() -> None:
 
     raw_df = load_market_data(CSV_FILENAME)
     template_df = load_curated_template()
+    full_universe_schema_df = load_full_universe_schema(FULL_UNIVERSE_SCHEMA_FILENAME)
     scored_df = compute_market_scores(raw_df)
     try:
         factor_historic_df = fetch_factor_historic_snapshot()
@@ -1374,11 +1391,11 @@ def main() -> None:
         state_factor_df = pd.DataFrame()
     macro_df = fetch_macro_backdrop()
     enrichment_df = fetch_yfinance_enrichment(scored_df["Ticker"].dropna().unique().tolist())
-    universe_df = build_universe_frame(scored_df.merge(enrichment_df, on="Ticker", how="left"))
+    universe_df = build_universe_frame(scored_df.merge(enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
     curated_df = build_curated_frame(scored_df, enrichment_df, template_df)
 
     curated_classes = template_df[CURATED_CLASS_COL].dropna().drop_duplicates().tolist()
-    universe_classes = raw_df[CLASS_COL].dropna().drop_duplicates().tolist()
+    universe_classes = universe_df[FULL_UNIVERSE_GROUP_COL].dropna().drop_duplicates().tolist()
 
     with st.sidebar:
         st.header("Dashboard")
@@ -1392,7 +1409,7 @@ def main() -> None:
         else:
             selected_curated_classes = curated_classes
             if dashboard_mode == "Full Universe":
-                selected_universe_classes = st.multiselect("Asset Class", options=universe_classes, default=universe_classes)
+                selected_universe_classes = st.multiselect("Universe Group", options=universe_classes, default=universe_classes)
             else:
                 selected_universe_classes = universe_classes
         st.caption("Live enrichments are cached for 60 minutes via st.cache_data for Streamlit Community Cloud.")
