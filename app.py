@@ -985,7 +985,6 @@ def build_macro_cards(df: pd.DataFrame) -> str:
             f"<div class='macro-regime'>{escape(str(row['Regime']))}</div>"
             f"<div class='macro-meta'>{escape(str(row['Description']))}</div>"
             f"<div class='macro-meta'>10Y Z-Score: {z_text}</div>"
-            f"<div class='macro-meta'>As of {as_of}</div>"
             "</div>"
         )
     return f"<div class='macro-grid'>{''.join(cards)}</div>"
