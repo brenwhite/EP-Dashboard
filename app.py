@@ -2036,19 +2036,16 @@ def inject_css() -> None:
             letter-spacing: 0.06em;
             text-transform: uppercase;
             padding: 0.8rem 0.85rem;
-            border-bottom: 1px solid rgb(180, 170, 161);
             text-align: center;
             white-space: nowrap;
         }
         .market-table tbody td {
             padding: 0.8rem 0.85rem;
-            border-bottom: 1px solid rgb(195, 185, 176);
             color: rgb(0, 0, 0);
             font-size: 0.92rem;
             vertical-align: middle;
             text-align: center;
         }
-        .market-table tbody tr:last-child td { border-bottom: none; }
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
         .name { min-width: 250px; text-align: left !important; }
         .num, .pe { text-align: center; white-space: nowrap; }
