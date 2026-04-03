@@ -120,6 +120,46 @@ BASIC_STATE_FACTORS = [
     "Liquidity",
 ]
 
+TECHNICAL_FACTOR_IDS = [
+    "Market",
+    "Value",
+    "Growth",
+    "Momentum",
+    "Quality",
+    "LowVolatility",
+    "SmallSize",
+    "BetaFactor",
+    "Liquidity",
+    "DividendYield",
+    "Buybacks",
+    "MarketBreadth",
+    "InterestRate",
+    "CreditRisk",
+    "OilPrice",
+    "GoldPrice",
+    "USDollar",
+]
+
+TECHNICAL_FACTOR_LABELS = {
+    "Market": "Market",
+    "Value": "Value",
+    "Growth": "Growth",
+    "Momentum": "Momentum",
+    "Quality": "Quality",
+    "LowVolatility": "Low Volatility",
+    "SmallSize": "Small Size",
+    "BetaFactor": "Beta Factor",
+    "Liquidity": "Liquidity",
+    "DividendYield": "Dividend Yield",
+    "Buybacks": "Buybacks",
+    "MarketBreadth": "Market Breadth",
+    "InterestRate": "Interest Rate",
+    "CreditRisk": "Credit Risk",
+    "OilPrice": "Oil Price",
+    "GoldPrice": "Gold Price",
+    "USDollar": "US Dollar",
+}
+
 FULL_UNIVERSE_PE_CLASSES = {
     "Greater China Equity",
     "Europe Equity Large Cap",
@@ -641,6 +681,22 @@ def fetch_stock_history_frame(ticker: str, days: int = 2000) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
+def fetch_factor_history_frame(factor_id: str, days: int = 2000) -> pd.DataFrame:
+    payload = factor_api_get_json(f"/api/factor-history/{quote(factor_id)}?days={days}", timeout=30)
+    records = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list) or not records:
+        return pd.DataFrame(columns=["close"])
+
+    df = pd.DataFrame(records)
+    if "date" not in df.columns or "close" not in df.columns:
+        return pd.DataFrame(columns=["close"])
+    df["date"] = pd.to_datetime(df["date"])
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["date", "close"]).set_index("date").sort_index()
+    return df[["close"]]
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
 def fetch_factorstoday_stock_returns(tickers: tuple[str, ...]) -> pd.DataFrame:
     rows: list[dict[str, float | str | None]] = []
     if not tickers:
@@ -708,6 +764,191 @@ def compute_rsi(series: pd.Series, window: int) -> float | None:
     rsi = 100 - (100 / (1 + rs))
     latest = rsi.iloc[-1]
     return None if pd.isna(latest) else float(latest)
+
+
+def compute_macd_signal(close: pd.Series) -> tuple[float | None, float | None, float | None, str]:
+    if len(close) < 35:
+        return None, None, None, "No Data"
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    hist = macd_line - signal_line
+    latest_macd = macd_line.iloc[-1]
+    latest_signal = signal_line.iloc[-1]
+    latest_hist = hist.iloc[-1]
+    if pd.isna(latest_macd) or pd.isna(latest_signal) or pd.isna(latest_hist):
+        return None, None, None, "No Data"
+    if latest_hist > 0:
+        status = "Bullish"
+    elif latest_hist < 0:
+        status = "Bearish"
+    else:
+        status = "Neutral"
+    return float(latest_macd), float(latest_signal), float(latest_hist), status
+
+
+def compute_breakout_status(close: pd.Series, lookback: int = 126) -> str:
+    if len(close) < lookback + 5:
+        return "No Data"
+    recent = close.tail(lookback + 1)
+    latest = recent.iloc[-1]
+    prior = recent.iloc[:-1]
+    prior_high = prior.max()
+    prior_low = prior.min()
+    if pd.isna(latest) or pd.isna(prior_high) or pd.isna(prior_low):
+        return "No Data"
+    if latest >= prior_high * 1.01:
+        return "Breakout"
+    if latest <= prior_low * 0.99:
+        return "Breakdown"
+    if latest >= prior_high * 0.995:
+        return "Near High"
+    if latest <= prior_low * 1.005:
+        return "Near Low"
+    return "Range"
+
+
+def compute_relative_strength(close: pd.Series, benchmark: pd.Series) -> tuple[float | None, str]:
+    aligned = pd.concat([close.rename("asset"), benchmark.rename("benchmark")], axis=1, join="inner").dropna()
+    if len(aligned) < 64:
+        return None, "No Data"
+    ratio = aligned["asset"] / aligned["benchmark"]
+    if len(ratio) < 64 or ratio.iloc[-64] == 0:
+        return None, "No Data"
+    rs_return = float((ratio.iloc[-1] / ratio.iloc[-64]) - 1)
+    if abs(rs_return) < 0.01:
+        return rs_return, "Flat"
+    if rs_return > 0:
+        return rs_return, "Leading"
+    return rs_return, "Lagging"
+
+
+def compute_technical_snapshot(close: pd.Series, benchmark_close: pd.Series | None = None) -> dict[str, float | str | None]:
+    close = close.dropna()
+    if len(close) < 260:
+        return {}
+
+    last_price = float(close.iloc[-1])
+    ema5 = float(close.ewm(span=5, adjust=False).mean().iloc[-1])
+    ema21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+    ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+    ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
+    rsi14 = compute_rsi(close, 14)
+
+    price_above_score = (
+        float(last_price > ema5) +
+        float(last_price > ema21) +
+        float(last_price > ema50) +
+        float(last_price > ema200)
+    ) / 4.0 * 100.0
+    ema_order_score = (
+        float(ema5 > ema21) +
+        float(ema21 > ema50) +
+        float(ema50 > ema200)
+    ) / 3.0 * 100.0
+    stack_score = 0.60 * price_above_score + 0.40 * ema_order_score
+    dist_long_score = np.nanmean([dist_score(last_price, ema50), dist_score(last_price, ema200)])
+    trend_score = 0.50 * stack_score + 0.50 * dist_long_score
+    trend_status = regime_from_score(trend_score)
+
+    macd_value, macd_signal, macd_hist, macd_status = compute_macd_signal(close)
+    breakout_status = compute_breakout_status(close)
+
+    dist_50 = None if ema50 == 0 else float((last_price / ema50) - 1)
+    dist_200 = None if ema200 == 0 else float((last_price / ema200) - 1)
+
+    rs_value = None
+    rs_status = "Benchmark"
+    if benchmark_close is not None:
+        rs_value, rs_status = compute_relative_strength(close, benchmark_close)
+
+    return {
+        "Last Price": last_price,
+        "EMA (50D)": ema50,
+        "EMA (200D)": ema200,
+        "RSI": rsi14,
+        "Trend_Score": trend_score,
+        "Trend_Label": trend_status,
+        "MACD": macd_value,
+        "MACD Signal": macd_signal,
+        "MACD Histogram": macd_hist,
+        "MACD_Label": macd_status,
+        "Distance_50D": dist_50,
+        "Distance_200D": dist_200,
+        "Breakout_Label": breakout_status,
+        "Relative_Strength": rs_value,
+        "Relative_Strength_Label": rs_status,
+    }
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def build_technical_overview_data(template_df: pd.DataFrame) -> pd.DataFrame:
+    tradable_rows: list[dict[str, float | str | None]] = []
+    factor_rows: list[dict[str, float | str | None]] = []
+
+    tradables = (
+        template_df[["Ticker", "Display_Name", CURATED_CLASS_COL]]
+        .drop_duplicates(subset=["Ticker"])
+        .rename(columns={"Display_Name": "Name"})
+    )
+    spy_history = fetch_stock_history_frame("SPY")
+    spy_close = spy_history["close"] if not spy_history.empty else None
+
+    for _, row in tradables.iterrows():
+        ticker = str(row["Ticker"])
+        history = fetch_stock_history_frame(ticker)
+        if history.empty:
+            continue
+        benchmark_close = None if ticker == "SPY" or spy_close is None else spy_close
+        snapshot = compute_technical_snapshot(history["close"], benchmark_close)
+        if not snapshot:
+            continue
+        tradable_rows.append(
+            {
+                "Entity_Group": "Tradable Technicals",
+                "Entity_Subgroup": str(row[CURATED_CLASS_COL]),
+                "Ticker": ticker,
+                "Name": str(row["Name"]),
+                "Kind": "ETF/Stock",
+                **snapshot,
+            }
+        )
+        time.sleep(0.11)
+
+    market_history = fetch_factor_history_frame("Market")
+    market_close = market_history["close"] if not market_history.empty else None
+
+    for factor_id in TECHNICAL_FACTOR_IDS:
+        history = fetch_factor_history_frame(factor_id)
+        if history.empty:
+            continue
+        benchmark_close = None if factor_id == "Market" or market_close is None else market_close
+        snapshot = compute_technical_snapshot(history["close"], benchmark_close)
+        if not snapshot:
+            continue
+        factor_rows.append(
+            {
+                "Entity_Group": "Factor Rotation Technicals",
+                "Entity_Subgroup": "Factors & Macro",
+                "Ticker": factor_id,
+                "Name": TECHNICAL_FACTOR_LABELS.get(factor_id, factor_id),
+                "Kind": "Factor",
+                **snapshot,
+            }
+        )
+        time.sleep(0.11)
+
+    combined = pd.DataFrame(tradable_rows + factor_rows)
+    if combined.empty:
+        return combined
+    combined["Group_Order"] = combined["Entity_Group"].map(
+        {"Tradable Technicals": 0, "Factor Rotation Technicals": 1}
+    )
+    combined = combined.sort_values(["Group_Order", "Trend_Score", "Name"], ascending=[True, False, True]).drop(
+        columns="Group_Order"
+    )
+    return combined
 
 
 def compute_factor_signal_frame(return_panel: pd.DataFrame) -> pd.DataFrame:
@@ -1623,6 +1864,49 @@ def render_quarterly_snapshot_section(snapshot_df: pd.DataFrame) -> None:
     st.altair_chart(build_gdp_cpi_bar_chart(snapshot_df), use_container_width=True)
 
 
+def technical_badge(label: str) -> str:
+    badge_class = "neutral"
+    normalized = label.lower()
+    if normalized in {"bullish", "leading", "breakout", "near high", "strong bull", "bull"}:
+        badge_class = "bull"
+    elif normalized in {"bearish", "lagging", "breakdown", "near low", "strong bear", "bear"}:
+        badge_class = "bear"
+    return f"<span class='tech-badge {badge_class}'>{escape(label)}</span>"
+
+
+def format_pct(value: float | None, decimals: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "&mdash;"
+    return f"{value * 100:.{decimals}f}%"
+
+
+def build_technical_table(group_name: str, group_df: pd.DataFrame) -> str:
+    rows: list[str] = []
+    for _, row in group_df.iterrows():
+        distance_text = f"{format_pct(row['Distance_50D'])} / {format_pct(row['Distance_200D'])}"
+        rs_label = "Benchmark" if row["Relative_Strength_Label"] == "Benchmark" else f"{row['Relative_Strength_Label']} {format_pct(row['Relative_Strength'])}"
+        rsi_text = "&mdash;" if pd.isna(row["RSI"]) else f"{row['RSI']:.1f}"
+        rows.append(
+            "<tr>"
+            f"<td class='name'>{escape(str(row['Name']))}</td>"
+            f"<td>{technical_badge(str(row['MACD_Label']))}</td>"
+            f"<td>{technical_badge(str(row['Trend_Label']))}</td>"
+            f"<td class='num'>{rsi_text}</td>"
+            f"<td class='num tech-distance'>{distance_text}</td>"
+            f"<td>{technical_badge(str(row['Breakout_Label']))}</td>"
+            f"<td class='num'>{escape(rs_label)}</td>"
+            "</tr>"
+        )
+    return (
+        f"<section class='group-block'><div class='group-header'>{escape(group_name)}</div>"
+        "<div class='table-scroll'><table class='market-table technical-table'>"
+        "<thead><tr>"
+        "<th>Name</th><th>MACD</th><th>Trend</th><th>RSI</th><th>Distance from 50D / 200D</th><th>Breakout / Breakdown</th><th>Relative Strength</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+    )
+
+
 def build_curated_table(group_name: str, group_df: pd.DataFrame) -> str:
     rows: list[str] = []
     for _, row in group_df.iterrows():
@@ -1743,6 +2027,7 @@ def inject_css() -> None:
         .curated-table { min-width: 1360px; }
         .universe-table { min-width: 1080px; }
         .state-table { min-width: 980px; }
+        .technical-table { min-width: 1120px; }
         .market-table thead th {
             background: rgb(195, 185, 176);
             color: rgb(0, 0, 0);
@@ -1782,6 +2067,21 @@ def inject_css() -> None:
         .signal.bull { color: #1f7a46; background: rgba(31, 122, 70, 0.12); }
         .signal.bear { color: #b24131; background: rgba(178, 65, 49, 0.12); }
         .signal.neutral { color: #8a7457; background: rgba(138, 116, 87, 0.14); }
+        .tech-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 94px;
+            padding: 0.34rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .tech-badge.bull { color: #1f7a46; background: rgba(31, 122, 70, 0.12); }
+        .tech-badge.bear { color: #b24131; background: rgba(178, 65, 49, 0.12); }
+        .tech-badge.neutral { color: #8a7457; background: rgba(138, 116, 87, 0.14); }
+        .tech-distance { white-space: nowrap; }
         .score-wrap {
             display: grid;
             grid-template-columns: 1fr auto;
@@ -1930,6 +2230,30 @@ def render_universe_dashboard(universe_df: pd.DataFrame, selected_classes: list[
             st.markdown(build_universe_table(group_name, group), unsafe_allow_html=True)
 
 
+def render_technical_dashboard(technical_df: pd.DataFrame, query_text: str) -> None:
+    if technical_df.empty:
+        st.info("Technical data could not be loaded from FactorsToday.")
+        return
+
+    filtered = technical_df.copy()
+    if query_text:
+        query = query_text.lower()
+        filtered = filtered[
+            filtered["Ticker"].str.lower().str.contains(query, na=False)
+            | filtered["Name"].str.lower().str.contains(query, na=False)
+        ]
+    if filtered.empty:
+        st.info("No technical entities match the current filters.")
+        return
+
+    for group_name in ["Tradable Technicals", "Factor Rotation Technicals"]:
+        group = filtered[filtered["Entity_Group"] == group_name].copy()
+        if group.empty:
+            continue
+        group = group.sort_values(["Trend_Score", "Name"], ascending=[False, True])
+        st.markdown(build_technical_table(group_name, group), unsafe_allow_html=True)
+
+
 def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) -> None:
     if factor_df.empty:
         st.info("The FactorsToday API could not be reached. The State of the Market dashboard is temporarily unavailable.")
@@ -2008,10 +2332,17 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Dashboard")
-        dashboard_mode = st.radio("View", ["Curated Overview", "Full Universe", "State of the Market", "Macro Dashboard"], index=0)
+        dashboard_mode = st.radio(
+            "View",
+            ["Curated Overview", "Full Universe", "Technical Overview", "State of the Market", "Macro Dashboard"],
+            index=0,
+        )
         if dashboard_mode == "State of the Market":
             search_label = "Search Factor"
             search_placeholder = "Market, Momentum, GoldPrice..."
+        elif dashboard_mode == "Technical Overview":
+            search_label = "Search Entity"
+            search_placeholder = "SPY, Gold Price, Value..."
         else:
             search_label = "Search Ticker"
             search_placeholder = "SPY, TLT, GLD..."
@@ -2054,6 +2385,9 @@ def main() -> None:
         universe_enrichment_df = file_enrichment_df.merge(returns_df, on="Ticker", how="left")
         universe_df = build_universe_frame(scored_df.merge(universe_enrichment_df, on="Ticker", how="left"), full_universe_schema_df)
         render_universe_dashboard(universe_df, selected_universe_classes, query_text)
+    elif dashboard_mode == "Technical Overview":
+        technical_df = build_technical_overview_data(template_df)
+        render_technical_dashboard(technical_df, query_text)
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
