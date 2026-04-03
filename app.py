@@ -1182,7 +1182,7 @@ def inject_css() -> None:
             border-bottom: 1px solid rgb(195, 185, 176);
             color: rgb(0, 0, 0);
             font-size: 0.92rem;
-            vertical-align: middle;
+            vertical-align: center;
         }
         .market-table tbody tr:last-child td { border-bottom: none; }
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
