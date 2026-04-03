@@ -535,13 +535,27 @@ def fetch_macro_stagflation_panels() -> dict[str, object]:
     errors: dict[str, str] = {}
 
     try:
-        real_earnings = resample_to_monthly_last(fred_series_observations("CES0500000030", api_key=api_key, units="pc1"))
-        real_earnings = real_earnings.rename(columns={"value": "real_avg_weekly_earnings_yoy"})
+        nominal_earnings = resample_to_monthly_last(
+            fred_series_observations("CES0500000030", api_key=api_key, units="lin")
+        )
+        nominal_earnings = nominal_earnings.rename(columns={"value": "nominal_avg_weekly_earnings"})
 
-        cpi = resample_to_monthly_last(fred_series_observations("CPIAUCSL", api_key=api_key, units="pc1"))
-        cpi = cpi.rename(columns={"value": "cpi_yoy"})
+        cpi_level = resample_to_monthly_last(fred_series_observations("CPIAUCSL", api_key=api_key, units="lin"))
+        cpi_level = cpi_level.rename(columns={"value": "cpi_level"})
 
-        earnings_vs_cpi = real_earnings.join(cpi, how="outer").dropna(how="all")
+        cpi_yoy = resample_to_monthly_last(fred_series_observations("CPIAUCSL", api_key=api_key, units="pc1"))
+        cpi_yoy = cpi_yoy.rename(columns={"value": "cpi_yoy"})
+
+        earnings_vs_cpi = nominal_earnings.join(cpi_level, how="inner").join(cpi_yoy[["cpi_yoy"]], how="left")
+        earnings_vs_cpi["real_avg_weekly_earnings_level"] = np.where(
+            earnings_vs_cpi["cpi_level"] != 0,
+            (earnings_vs_cpi["nominal_avg_weekly_earnings"] / earnings_vs_cpi["cpi_level"]) * 100.0,
+            np.nan,
+        )
+        earnings_vs_cpi["real_avg_weekly_earnings_yoy"] = (
+            earnings_vs_cpi["real_avg_weekly_earnings_level"].pct_change(12) * 100.0
+        )
+        earnings_vs_cpi = earnings_vs_cpi[["real_avg_weekly_earnings_yoy", "cpi_yoy"]].dropna(how="all")
         earnings_vs_cpi = earnings_vs_cpi.loc[earnings_vs_cpi.index >= pd.Timestamp("2022-01-01")]
         panels["earnings_vs_cpi"] = earnings_vs_cpi
     except Exception as exc:
