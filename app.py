@@ -1070,8 +1070,8 @@ def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Char
             title=alt.TitleParams(
                 text=title,
                 subtitle=subtitle,
-                fontSize=14,
-                subtitleFontSize=11,
+                fontSize=21,
+                subtitleFontSize=14,
                 anchor="start",
                 dy=-8,
             ),
@@ -1086,6 +1086,7 @@ def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Char
                     labelColor="black",
                     tickColor="black",
                     domainColor="black",
+                    lineColor="black"
                     grid=False,
                 ),
             )
