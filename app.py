@@ -343,7 +343,7 @@ def fred_series_observations(series_id: str, api_key: str, units: str = "lin") -
 
 
 def resample_to_monthly_last(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.resample("M").last().dropna()
+    out = df.resample("ME").last().dropna()
     if out.empty:
         raise RuntimeError("Series became empty after monthly resample.")
     return out
@@ -1237,7 +1237,7 @@ def render_macro_dashboard(macro_df: pd.DataFrame) -> None:
     available = len(valid)
     st.markdown(build_macro_cards(macro_df), unsafe_allow_html=True)
     if not available:
-        st.warning("FRED data could not be loaded for the configured series. Check your API key and network access.")
+        st.warning("FRED data could not be loaded for the configured series. Check the API key, network access, or any series-processing errors shown on the cards.")
 
 
 def main() -> None:
