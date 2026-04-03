@@ -1065,7 +1065,17 @@ def build_macro_cards(df: pd.DataFrame) -> str:
 def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Chart:
     return (
         alt.Chart(data.reset_index().rename(columns={"index": "date"}))
-        .properties(height=360, title=alt.TitleParams(text=title, subtitle=subtitle, fontSize=16, subtitleFontSize=11))
+        .properties(
+            height=330,
+            title=alt.TitleParams(
+                text=title,
+                subtitle=subtitle,
+                fontSize=14,
+                subtitleFontSize=11,
+                anchor="start",
+                dy=-8,
+            ),
+        )
         .encode(
             x=alt.X(
                 "date:T",
@@ -1075,7 +1085,7 @@ def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Char
                     labelAngle=-90,
                     labelColor="black",
                     tickColor="black",
-                    domainColor="rgb(165, 155, 146)",
+                    domainColor="black",
                     grid=False,
                 ),
             )
@@ -1085,18 +1095,16 @@ def _base_labor_chart(data: pd.DataFrame, title: str, subtitle: str) -> alt.Char
 
 def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
     chart_df = df.copy().dropna(subset=["nfp_yoy"])
-    chart_df["trend"] = np.polyval(np.polyfit(np.arange(len(chart_df)), chart_df["nfp_yoy"], 1), np.arange(len(chart_df)))
     base = _base_labor_chart(chart_df, "Employment Growth Converging to Zero", "NFP, Y/Y %")
-    line = base.mark_line(color="#2f3134", strokeWidth=4).encode(
+    return (
+        base.mark_line(color="#2f3134", strokeWidth=4)
+        .encode(
         y=alt.Y(
             "nfp_yoy:Q",
-            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", domainColor="black", tickColor="black", grid=False),
             scale=alt.Scale(zero=False),
         )
     )
-    trend = base.mark_line(color="#d53d32", strokeWidth=2).encode(y="trend:Q")
-    return (
-        (line + trend)
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
@@ -1120,7 +1128,7 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
             labelAngle=-45,
             labelColor="black",
             tickColor="black",
-            domainColor="rgb(165, 155, 146)",
+            domainColor="black",
             grid=False,
         ),
     )
@@ -1161,7 +1169,7 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
         x=x_encoding,
         y=alt.Y(
             "value:Q",
-            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", domainColor="black", tickColor="black", grid=False),
             scale=alt.Scale(zero=False),
         ),
         color=alt.Color("series:N", scale=color_scale, legend=alt.Legend(title=None, orient="top")),
@@ -1170,7 +1178,7 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
     return (
         alt.layer(lines, bars)
         .resolve_scale(y="independent")
-        .properties(height=360, title=title, background="rgb(210, 200, 191)")
+        .properties(height=330, title=title, background="rgb(210, 200, 191)")
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
@@ -1180,25 +1188,20 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
 
 def build_real_income_chart(df: pd.DataFrame) -> alt.Chart:
     chart_df = df.copy().dropna(subset=["real_income_yoy"])
-    chart_df["trend"] = np.polyval(
-        np.polyfit(np.arange(len(chart_df)), chart_df["real_income_yoy"], 1),
-        np.arange(len(chart_df)),
-    )
     base = _base_labor_chart(
         chart_df,
         "Real Disposable Income Just Above 1%",
         "Real Disposable Personal Income, Y/Y %",
     )
-    line = base.mark_line(color="#2f3134", strokeWidth=4).encode(
+    return (
+        base.mark_line(color="#2f3134", strokeWidth=4)
+        .encode(
         y=alt.Y(
             "real_income_yoy:Q",
-            axis=alt.Axis(title=None, format=".1f", labelColor="black", gridColor="rgba(0,0,0,0.12)"),
+            axis=alt.Axis(title=None, format=".1f", labelColor="black", domainColor="black", tickColor="black", grid=False),
             scale=alt.Scale(zero=False),
         )
     )
-    trend = base.mark_line(color="#d53d32", strokeWidth=2).encode(y="trend:Q")
-    return (
-        (line + trend)
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
