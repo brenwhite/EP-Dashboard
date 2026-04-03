@@ -50,7 +50,7 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 6.0,
         "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Cooling", "Sticky", "Rising"),
-        "description": "CPI year-over-year",
+        "description": "CPI Year-Over-Year",
     },
     {
         "series_id": "DGS10",
@@ -61,7 +61,7 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 6.0,
         "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Supportive", "Neutral", "Restrictive"),
-        "description": "10Y Treasury yield",
+        "description": "10Y Treasury Yield",
     },
     {
         "series_id": "BAMLH0A0HYM2",
@@ -72,7 +72,7 @@ MACRO_DIAL_CONFIG = [
         "dial_max": 10.0,
         "tick_values": [2, 4, 6, 8, 10],
         "regime_labels": ("Calm", "Cautious", "Stressed"),
-        "description": "High-yield OAS",
+        "description": "High-Yield OAS",
     },
 ]
 
