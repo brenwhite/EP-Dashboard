@@ -20,7 +20,7 @@ st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_c
 
 
 CSV_FILENAME = "data.csv"
-CLASS_COL = "Classification"
+CLASS_COL = "Class"
 CURATED_CLASS_COL = "Asset Class"
 
 W_TREND = 0.40
@@ -819,7 +819,7 @@ def compute_classification_scores(df_scored: pd.DataFrame) -> pd.DataFrame:
         + W_RISK * output["Risk_Score"]
         + W_PART * output["Participation_Score"]
     )
-    output = output.reset_index().rename(columns={CLASS_COL: "Classification"})
+    output = output.reset_index().rename(columns={CLASS_COL: "Class"})
     output["Regime"] = output["Master_Score"].apply(regime_from_score)
     return output.sort_values("Master_Score", ascending=False).reset_index(drop=True)
 
