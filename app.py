@@ -20,6 +20,7 @@ st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_c
 
 CSV_FILENAME = "data.csv"
 FULL_UNIVERSE_SCHEMA_FILENAME = "full_universe_schema.csv"
+MACRO_QUARTERLY_SNAPSHOT_FILENAME = "macro_quarterly_snapshot.csv"
 CLASS_COL = "Classification"
 CURATED_CLASS_COL = "Asset Class"
 FULL_UNIVERSE_GROUP_COL = "Full Universe Group"
@@ -902,6 +903,18 @@ def load_full_universe_schema(csv_name: str) -> pd.DataFrame:
     return df.rename(columns={"Full_Universe_Group": FULL_UNIVERSE_GROUP_COL})
 
 
+@st.cache_data(show_spinner=False)
+def load_macro_quarterly_snapshot(csv_name: str) -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        return pd.DataFrame(columns=["Quarter", "Type", "Real_GDP_YoY", "Headline_CPI_YoY"])
+    df = pd.read_csv(csv_path)
+    for col in ["Real_GDP_YoY", "Headline_CPI_YoY"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
 def compute_market_scores(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
     tickers = sorted(data["Ticker"].dropna().unique().tolist())
@@ -1515,6 +1528,101 @@ def render_stagflation_section(stagflation_payload: dict[str, object]) -> None:
         st.caption(f"Missing or unavailable FRED stagflation series: {missing}")
 
 
+def build_gdp_cpi_bar_chart(df: pd.DataFrame) -> alt.Chart:
+    if df.empty:
+        return alt.Chart(pd.DataFrame({"Quarter": [], "Series": [], "Value": []}))
+
+    plot_df = df.melt(
+        id_vars=["Quarter", "Type"],
+        value_vars=["Real_GDP_YoY", "Headline_CPI_YoY"],
+        var_name="Series",
+        value_name="Value",
+    )
+    plot_df["Series"] = plot_df["Series"].map(
+        {
+            "Real_GDP_YoY": "Real GDP YoY",
+            "Headline_CPI_YoY": "Headline CPI YoY",
+        }
+    )
+    quarter_order = df["Quarter"].tolist()
+    max_val = float(plot_df["Value"].max()) if plot_df["Value"].notna().any() else 6.0
+    upper = math.ceil((max_val + 0.4) * 2) / 2
+
+    return (
+        alt.Chart(plot_df)
+        .mark_bar(size=18)
+        .encode(
+            x=alt.X(
+                "Quarter:N",
+                sort=quarter_order,
+                axis=alt.Axis(
+                    title=None,
+                    labelAngle=-90,
+                    labelColor="black",
+                    tickColor="black",
+                    domainColor="black",
+                    grid=False,
+                ),
+            ),
+            xOffset=alt.XOffset("Series:N"),
+            y=alt.Y(
+                "Value:Q",
+                scale=alt.Scale(domain=[0, upper]),
+                axis=alt.Axis(
+                    title=None,
+                    format=".1f",
+                    labelColor="black",
+                    tickColor="black",
+                    domainColor="black",
+                    grid=False,
+                ),
+            ),
+            color=alt.Color(
+                "Series:N",
+                scale=alt.Scale(domain=["Real GDP YoY", "Headline CPI YoY"], range=["#2f3134", "#e2833d"]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            opacity=alt.Opacity(
+                "Type:N",
+                scale=alt.Scale(domain=["Actual", "Estimate"], range=[1.0, 0.6]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            tooltip=["Quarter:N", "Type:N", "Series:N", alt.Tooltip("Value:Q", format=".2f")],
+        )
+        .properties(
+            height=330,
+            title=alt.TitleParams(
+                text="United States: Real GDP YoY vs Headline CPI YoY",
+                subtitle="Quarterly snapshot transcribed from the provided image",
+                fontSize=14,
+                subtitleFontSize=11,
+                anchor="start",
+                dy=-8,
+            ),
+            background="rgb(210, 200, 191)",
+        )
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_title(color="black")
+        .configure_axis(labelFontSize=11, titleColor="black")
+        .configure_legend(labelColor="black", titleColor="black")
+    )
+
+
+def render_quarterly_snapshot_section(snapshot_df: pd.DataFrame) -> None:
+    st.markdown(
+        """
+        <section class="group-block">
+            <div class="group-header">GDP vs CPI Snapshot</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    if snapshot_df.empty:
+        st.info("Quarterly GDP/CPI snapshot data is unavailable.")
+        return
+    st.altair_chart(build_gdp_cpi_bar_chart(snapshot_df), use_container_width=True)
+
+
 def build_curated_table(group_name: str, group_df: pd.DataFrame) -> str:
     rows: list[str] = []
     for _, row in group_df.iterrows():
@@ -1841,6 +1949,7 @@ def render_macro_dashboard(
     macro_df: pd.DataFrame,
     labor_payload: dict[str, object],
     stagflation_payload: dict[str, object],
+    quarterly_snapshot_df: pd.DataFrame,
 ) -> None:
     if macro_df.empty:
         st.info("Add `FRED_API_KEY` to `st.secrets` or your environment to load the macro dashboard.")
@@ -1853,6 +1962,7 @@ def render_macro_dashboard(
         st.warning("FRED data could not be loaded for the configured series. Check the API key, network access, or any series-processing errors shown on the cards.")
     render_labor_section(labor_payload)
     render_stagflation_section(stagflation_payload)
+    render_quarterly_snapshot_section(quarterly_snapshot_df)
 
 
 def main() -> None:
@@ -1888,6 +1998,7 @@ def main() -> None:
     macro_df = fetch_macro_backdrop()
     labor_payload = fetch_macro_labor_panels()
     stagflation_payload = fetch_macro_stagflation_panels()
+    quarterly_snapshot_df = load_macro_quarterly_snapshot(MACRO_QUARTERLY_SNAPSHOT_FILENAME)
     universe_base = scored_df.merge(file_enrichment_df, on="Ticker", how="left").merge(full_universe_schema_df, on="Ticker", how="left")
     universe_base[FULL_UNIVERSE_GROUP_COL] = universe_base[FULL_UNIVERSE_GROUP_COL].fillna("Other/Unmapped")
     curated_base = template_df.merge(scored_df, on="Ticker", how="left", suffixes=("", "_csv")).merge(file_enrichment_df, on="Ticker", how="left")
@@ -1946,7 +2057,7 @@ def main() -> None:
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
-        render_macro_dashboard(macro_df, labor_payload, stagflation_payload)
+        render_macro_dashboard(macro_df, labor_payload, stagflation_payload, quarterly_snapshot_df)
 
     st.caption(
         "Signal arrows and market-state classifications come from the proprietary regime score. Yield and P/E come from the source CSV where available, while table return fields are computed from the FactorsToday stock-history API."
