@@ -48,6 +48,7 @@ MACRO_DIAL_CONFIG = [
         "suffix": "%",
         "dial_min": 0.0,
         "dial_max": 6.0,
+        "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Cooling", "Sticky", "Rising"),
         "description": "CPI year-over-year",
     },
@@ -58,6 +59,7 @@ MACRO_DIAL_CONFIG = [
         "suffix": "%",
         "dial_min": 0.0,
         "dial_max": 6.0,
+        "tick_values": [0, 1, 2, 3, 4, 5, 6],
         "regime_labels": ("Supportive", "Neutral", "Restrictive"),
         "description": "10Y Treasury yield",
     },
@@ -68,6 +70,7 @@ MACRO_DIAL_CONFIG = [
         "suffix": "%",
         "dial_min": 2.0,
         "dial_max": 10.0,
+        "tick_values": [2, 4, 6, 8, 10],
         "regime_labels": ("Calm", "Cautious", "Stressed"),
         "description": "High-yield OAS",
     },
@@ -934,6 +937,9 @@ def build_macro_cards(df: pd.DataFrame) -> str:
         value = float(np.clip(row["Latest"], min_val, max_val))
         frac = 0.0 if max_val <= min_val else (value - min_val) / (max_val - min_val)
         angle = 180.0 - 180.0 * frac
+        tick_values = cfg.get("tick_values")
+        if not tick_values:
+            tick_values = [min_val + i * (max_val - min_val) / 6.0 for i in range(7)]
 
         cx, cy = 160.0, 162.0
         radius = 108.0
@@ -943,16 +949,15 @@ def build_macro_cards(df: pd.DataFrame) -> str:
 
         tick_parts: list[str] = []
         label_parts: list[str] = []
-        for i in range(7):
-            tfrac = i / 6.0
-            tick_angle = 180.0 - 180.0 * tfrac
+        for tick_val in tick_values:
+            tfrac = 0.0 if max_val <= min_val else (float(tick_val) - min_val) / (max_val - min_val)
+            tick_angle = 180.0 - 180.0 * float(np.clip(tfrac, 0.0, 1.0))
             inner_x, inner_y = point(cx, cy, radius - 12.0, tick_angle)
             outer_x, outer_y = point(cx, cy, radius + 5.0, tick_angle)
             tick_parts.append(
                 f"<line x1='{inner_x:.2f}' y1='{inner_y:.2f}' x2='{outer_x:.2f}' y2='{outer_y:.2f}' stroke='black' stroke-width='2.5' />"
             )
             label_x, label_y = point(cx, cy, radius + 34.0, tick_angle)
-            tick_val = min_val + tfrac * (max_val - min_val)
             label_parts.append(
                 f"<text x='{label_x:.2f}' y='{label_y:.2f}' text-anchor='middle' dominant-baseline='middle' class='macro-tick-label'>{tick_val:.0f}{escape(str(cfg['suffix']))}</text>"
             )
