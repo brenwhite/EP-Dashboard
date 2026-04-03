@@ -1187,7 +1187,7 @@ def inject_css() -> None:
         .market-table tbody tr:last-child td { border-bottom: none; }
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
         .name { min-width: 250px; }
-        .num, .pe { text-align: right; white-space: nowrap; }
+        .num, .pe { text-align: center; white-space: nowrap; }
         .signal-col { width: 110px; text-align: center; }
         .master { min-width: 185px; }
         .signal {
@@ -1222,7 +1222,7 @@ def inject_css() -> None:
             border-radius: inherit;
             background: linear-gradient(90deg, #ba553f 0%, #d2a04c 48%, #2f8a57 100%);
         }
-        .score-label { min-width: 38px; text-align: right; font-weight: 700; color: rgb(0, 0, 0); }
+        .score-label { min-width: 38px; text-align: center; font-weight: 700; color: rgb(0, 0, 0); }
         .state-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
