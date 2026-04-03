@@ -917,10 +917,12 @@ def build_macro_cards(df: pd.DataFrame) -> str:
         radians = math.radians(degrees)
         return cx + radius * math.cos(radians), cy - radius * math.sin(radians)
 
-    def arc_path(cx: float, cy: float, radius: float, start_deg: float, end_deg: float) -> str:
-        x1, y1 = point(cx, cy, radius, start_deg)
-        x2, y2 = point(cx, cy, radius, end_deg)
-        return f"M {x1:.2f} {y1:.2f} A {radius:.2f} {radius:.2f} 0 0 0 {x2:.2f} {y2:.2f}"
+    def top_arc_path(cx: float, cy: float, radius: float, segments: int = 48) -> str:
+        points = [point(cx, cy, radius, 180.0 - (180.0 * i / segments)) for i in range(segments + 1)]
+        first_x, first_y = points[0]
+        commands = [f"M {first_x:.2f} {first_y:.2f}"]
+        commands.extend(f"L {x:.2f} {y:.2f}" for x, y in points[1:])
+        return " ".join(commands)
 
     def macro_gauge_svg(row: pd.Series) -> str:
         cfg = next((item for item in MACRO_DIAL_CONFIG if item["title"] == row["Title"]), None)
@@ -933,10 +935,10 @@ def build_macro_cards(df: pd.DataFrame) -> str:
         frac = 0.0 if max_val <= min_val else (value - min_val) / (max_val - min_val)
         angle = 180.0 - 180.0 * frac
 
-        cx, cy = 160.0, 150.0
-        radius = 104.0
-        needle_radius = 82.0
-        arc = arc_path(cx, cy, radius, 180.0, 0.0)
+        cx, cy = 160.0, 162.0
+        radius = 108.0
+        needle_radius = 78.0
+        arc = top_arc_path(cx, cy, radius)
         nx, ny = point(cx, cy, needle_radius, angle)
 
         tick_parts: list[str] = []
@@ -944,24 +946,24 @@ def build_macro_cards(df: pd.DataFrame) -> str:
         for i in range(7):
             tfrac = i / 6.0
             tick_angle = 180.0 - 180.0 * tfrac
-            inner_x, inner_y = point(cx, cy, radius - 11.0, tick_angle)
-            outer_x, outer_y = point(cx, cy, radius + 4.0, tick_angle)
+            inner_x, inner_y = point(cx, cy, radius - 12.0, tick_angle)
+            outer_x, outer_y = point(cx, cy, radius + 5.0, tick_angle)
             tick_parts.append(
-                f"<line x1='{inner_x:.2f}' y1='{inner_y:.2f}' x2='{outer_x:.2f}' y2='{outer_y:.2f}' stroke='black' stroke-width='2' />"
+                f"<line x1='{inner_x:.2f}' y1='{inner_y:.2f}' x2='{outer_x:.2f}' y2='{outer_y:.2f}' stroke='black' stroke-width='2.5' />"
             )
-            label_x, label_y = point(cx, cy, radius + 24.0, tick_angle)
+            label_x, label_y = point(cx, cy, radius + 34.0, tick_angle)
             tick_val = min_val + tfrac * (max_val - min_val)
             label_parts.append(
                 f"<text x='{label_x:.2f}' y='{label_y:.2f}' text-anchor='middle' dominant-baseline='middle' class='macro-tick-label'>{tick_val:.0f}{escape(str(cfg['suffix']))}</text>"
             )
 
         return (
-            "<svg viewBox='0 0 320 190' class='macro-gauge-svg' role='img' aria-label='Macro dial'>"
-            f"<path d='{arc}' fill='none' stroke='black' stroke-width='12' stroke-linecap='round' />"
+            "<svg viewBox='0 0 320 210' class='macro-gauge-svg' role='img' aria-label='Macro dial'>"
+            f"<path d='{arc}' fill='none' stroke='black' stroke-width='14' stroke-linecap='round' stroke-linejoin='round' />"
             f"{''.join(tick_parts)}"
             f"{''.join(label_parts)}"
-            f"<line x1='{cx:.2f}' y1='{cy:.2f}' x2='{nx:.2f}' y2='{ny:.2f}' stroke='rgb(150, 140, 131)' stroke-width='7' stroke-linecap='round' />"
-            f"<circle cx='{cx:.2f}' cy='{cy:.2f}' r='10' fill='black' />"
+            f"<line x1='{cx:.2f}' y1='{cy:.2f}' x2='{nx:.2f}' y2='{ny:.2f}' stroke='rgb(150, 140, 131)' stroke-width='8' stroke-linecap='round' />"
+            f"<circle cx='{cx:.2f}' cy='{cy:.2f}' r='11' fill='black' />"
             "</svg>"
         )
 
@@ -1224,7 +1226,7 @@ def inject_css() -> None:
         }
         .macro-tick-label {
             fill: black;
-            font-size: 9px;
+            font-size: 12px;
             font-weight: 700;
         }
         .macro-value {
