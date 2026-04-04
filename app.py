@@ -187,6 +187,31 @@ DEFAULT_INTERNAL_TO_CW = {
     ("Alternative Assets", "Alternative Assets"): "Diversified Hedge Funds",
     ("Alternative Assets", "Private Assets"): "Diversified Private Equity",
     ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Equity L/S HFs",
+    ("Equities", "Flex"): "Equity L/S HFs",
+}
+
+DISPLAY_CLASS_MAP = {
+    "Equities": "Equity",
+    "Debt": "Debt",
+    "Government Debt": "Government Debt",
+    "Alternative Assets": "Real Assets",
+    "Alternatives with Tax Benefits": "Alternatives w/ Tax Benefits",
+    "Cash & Equivalents": "Cash & Equivalents",
+}
+
+DISPLAY_SEGMENT_MAP = {
+    ("Equities", "International"): "Global Equities",
+    ("Equities", "Emerging Markets"): "Global Equities",
+    ("Equities", "Large Cap"): "U.S. Equities",
+    ("Equities", "Mid Cap"): "U.S. Equities",
+    ("Equities", "Small Cap"): "U.S. Equities",
+    ("Equities", "All Cap"): "U.S. Equities",
+    ("Debt", "Diversified Debt Fund"): "Diversified Debt Funds",
+    ("Government Debt", "Govt/Inflation"): "US Treasury Debt",
+    ("Alternative Assets", "Commodities"): "Commodities",
+    ("Alternative Assets", "Precious Metals"): "Gold",
+    ("Alternative Assets", "REITs"): "Real Estate",
+    ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Tax-Aware Hedge Funds",
 }
 
 FULL_UNIVERSE_PE_CLASSES = {
@@ -1379,6 +1404,35 @@ def map_to_cliffwater(
     }
 
 
+def derive_allocation_display(row: pd.Series) -> tuple[str, str]:
+    account_text = str(row.get("account name", "")).lower()
+    security_name = str(row.get("matched security from master file") or row.get("security name") or "")
+    internal_class = row.get("internal class")
+    internal_segment = row.get("internal segment")
+
+    if "flex" in account_text:
+        return "Equity", "L/S Tax-Aware Equities"
+
+    if "navf" in security_name.lower():
+        return "Equity", "NAVF Select"
+    if "aqr ta delphi" in security_name.lower() or "aqr delphi" in security_name.lower():
+        return "Alternatives w/ Tax Benefits", "AQR Delphi+"
+    if "aqr ta helix" in security_name.lower() or "aqr helix" in security_name.lower():
+        return "Alternatives w/ Tax Benefits", "AQR Helix"
+    if "quantinno fundamental arbitrage" in security_name.lower() or str(row.get("ticker", "")).upper() == "QFAF":
+        return "Alternatives w/ Tax Benefits", "QFAF"
+    if "physical gold" in security_name.lower() or str(row.get("ticker", "")).upper() in {"PHYS", "GLD"}:
+        return "Real Assets", "Gold"
+
+    return (
+        DISPLAY_CLASS_MAP.get(internal_class, internal_class if pd.notna(internal_class) else "Unclassified"),
+        DISPLAY_SEGMENT_MAP.get(
+            (internal_class, internal_segment),
+            internal_segment if pd.notna(internal_segment) else "Unsegmented",
+        ),
+    )
+
+
 def classify_portfolio(
     portfolio_df: pd.DataFrame,
     master_df: pd.DataFrame,
@@ -1416,10 +1470,14 @@ def classify_portfolio(
         working["EMV"] = pd.to_numeric(working["EMV"], errors="coerce")
     else:
         working["EMV"] = np.nan
+    flex_mask = (
+        working["account name"].astype(str).str.lower().str.contains("flex", na=False)
+        | working["account type"].astype(str).str.lower().str.contains("flex", na=False)
+    )
+    blank_security_mask = ~working["security name"].notna() | (working["security name"].astype(str).str.strip() == "")
     working = working[
-        working["security name"].notna()
-        & (working["security name"].astype(str).str.strip() != "")
-        & (working["EMV"].isna() | (working["EMV"] > 0))
+        (working["EMV"].isna() | (working["EMV"] > 0))
+        & ((~blank_security_mask) | flex_mask)
     ].copy()
 
     indexes = build_master_indexes(master_df)
@@ -1430,6 +1488,7 @@ def classify_portfolio(
     for _, row in working.iterrows():
         security_name_norm = normalize_text_key(row.get("security name"))
         raw_symbol_id = normalize_identifier(row.get("ticker"))
+        is_flex_row = "flex" in str(f"{row.get('account name', '')} {row.get('account type', '')}").lower()
         lookup_sequence = [
             ("exact CUSIP", indexes["_norm_cusip"].get(normalize_identifier(row.get("CUSIP")), [])),
             ("exact alternative identifier", indexes["_norm_alt_id"].get(normalize_identifier(row.get("alternative identifier")), [])),
@@ -1469,7 +1528,7 @@ def classify_portfolio(
                 match_status = status
                 break
 
-        if matched_master is None and match_status != "ambiguous":
+        if matched_master is None and match_status != "ambiguous" and not is_flex_row:
             fuzzy_match, fuzzy_status = fuzzy_name_match(master_df, security_name_norm)
             if fuzzy_status == "matched" and fuzzy_match is not None:
                 matched_master = fuzzy_match
@@ -1482,7 +1541,7 @@ def classify_portfolio(
         output = {
             "account name": row.get("account name", ""),
             "account type": row.get("account type", ""),
-            "security name": row.get("security name", ""),
+            "security name": row.get("security name", "") if pd.notna(row.get("security name", "")) else "Flex Account",
             "ticker": row.get("ticker", ""),
             "CUSIP": row.get("CUSIP", ""),
             "alternative identifier": row.get("alternative identifier", ""),
@@ -1503,14 +1562,17 @@ def classify_portfolio(
 
         flex_text = f"{row.get('account name', '')} {row.get('account type', '')}"
         if "flex" in str(flex_text).lower():
-            output["internal class"] = "Alternatives with Tax Benefits"
-            output["internal segment"] = "Tax-Aware Hedge Fund"
+            output["internal class"] = "Equities"
+            output["internal segment"] = "Flex"
             output["match method"] = (
                 f"{output['match method']} + flex override" if output["match method"] != "no match" else "flex override"
             )
             output["match status"] = "matched"
 
         output.update(map_to_cliffwater(pd.Series(output), map_lookup, cw_lookup))
+        display_class, display_segment = derive_allocation_display(pd.Series(output))
+        output["display class"] = display_class
+        output["display segment"] = display_segment
         classified_rows.append(output)
         diagnostics.append(
             {
@@ -2666,6 +2728,36 @@ def build_allocation_table(title: str, df: pd.DataFrame, columns: list[str]) -> 
     )
 
 
+def build_household_allocation_layout(df: pd.DataFrame) -> str:
+    rows: list[str] = [
+        "<tr><th class='name'>Asset Class</th><th>Allocation (%)</th><th>Allocation ($)</th></tr>"
+    ]
+    total_emv = float(df["Allocation ($)"].sum()) if not df.empty else 0.0
+    for class_name, class_group in df.groupby("Asset Class", sort=False):
+        rows.append(f"<tr class='allocation-class-row'><td class='name'>{escape(str(class_name))}</td><td></td><td></td></tr>")
+        for _, row in class_group.iterrows():
+            pct_text = f"{row['Allocation (%)'] * 100:.1f}%"
+            amt_text = f"{row['Allocation ($)']:,.0f}"
+            rows.append(
+                "<tr>"
+                f"<td class='name'>{escape(str(row['Segment']))}</td>"
+                f"<td class='num'>{pct_text}</td>"
+                f"<td class='num'>{amt_text}</td>"
+                "</tr>"
+            )
+    rows.append(
+        "<tr class='allocation-total-row'>"
+        "<td class='name'>Total</td><td></td>"
+        f"<td class='num'>{total_emv:,.0f}</td>"
+        "</tr>"
+    )
+    return (
+        "<section class='group-block'><div class='group-header'>Household Asset Allocation</div>"
+        "<div class='table-scroll'><table class='market-table allocation-layout-table'>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+    )
+
+
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
@@ -2687,24 +2779,29 @@ def render_portfolio_classification_dashboard(
     household_emv = float(matched["EMV"].fillna(0).sum()) if "EMV" in matched.columns else 0.0
 
     allocation_summary = (
-        matched.groupby(["internal class", "internal segment"], dropna=False, as_index=False)["EMV"]
+        matched.groupby(["display class", "display segment"], dropna=False, as_index=False)["EMV"]
         .sum()
-        .rename(columns={"internal class": "Class", "internal segment": "Segment"})
+        .rename(columns={"display class": "Asset Class", "display segment": "Segment", "EMV": "Allocation ($)"})
     )
     if not allocation_summary.empty and household_emv > 0:
-        allocation_summary["Allocation"] = allocation_summary["EMV"] / household_emv
-        allocation_summary["Household EMV"] = household_emv
-        allocation_summary = allocation_summary.sort_values(["Class", "EMV"], ascending=[True, False])
+        allocation_summary["Allocation (%)"] = allocation_summary["Allocation ($)"] / household_emv
+        class_order = {
+            "Equity": 0,
+            "Debt": 1,
+            "Government Debt": 2,
+            "Alternatives w/ Tax Benefits": 3,
+            "Real Assets": 4,
+            "Cash & Equivalents": 5,
+            "Unclassified": 6,
+        }
+        allocation_summary["_class_order"] = allocation_summary["Asset Class"].map(class_order).fillna(99)
+        allocation_summary = allocation_summary.sort_values(
+            ["_class_order", "Asset Class", "Allocation ($)"],
+            ascending=[True, True, False],
+        ).drop(columns="_class_order")
 
     if not allocation_summary.empty:
-        st.markdown(
-            build_allocation_table(
-                "Household Asset Allocation",
-                allocation_summary,
-                ["Class", "Segment", "EMV", "Allocation"],
-            ),
-            unsafe_allow_html=True,
-        )
+        st.markdown(build_household_allocation_layout(allocation_summary), unsafe_allow_html=True)
 
     if not classified_df.empty:
         for class_name, class_group in matched.groupby("internal class", dropna=False):
