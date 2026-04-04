@@ -2791,32 +2791,36 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
     pie_df["Label"] = pd.Categorical(pie_df["Label"], categories=pie_order, ordered=True)
     pie_df = pie_df.sort_values("Label")
     pie_df["Legend Label"] = pie_df.apply(lambda row: f"{row['Label']} ({row['Allocation (%)'] * 100:.1f}%)", axis=1)
+    legend_order = pie_df["Legend Label"].tolist()
 
     color_scale = alt.Scale(
-        domain=pie_order,
+        domain=legend_order,
         range=["#2f3134", "#7a6c5d", "#a0662c", "#c89f5d", "#d8cabb"],
     )
 
-    base = alt.Chart(pie_df)
-
-    arc = base.mark_arc(outerRadius=145, innerRadius=35, stroke="rgb(210, 200, 191)", strokeWidth=1.5).encode(
+    return (
+        alt.Chart(pie_df)
+        .mark_arc(outerRadius=140, innerRadius=42, stroke="rgb(210, 200, 191)", strokeWidth=1.5)
+        .encode(
         theta=alt.Theta("Allocation ($):Q"),
-        color=alt.Color("Label:N", scale=color_scale, legend=alt.Legend(title=None, orient="right", labelLimit=260)),
+        color=alt.Color(
+            "Legend Label:N",
+            scale=color_scale,
+            legend=alt.Legend(
+                title=None,
+                orient="right",
+                labelLimit=400,
+                symbolSize=220,
+                labelFontSize=13,
+            ),
+        ),
         tooltip=[
             alt.Tooltip("Label:N", title="Asset Class"),
             alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
             alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
         ],
     )
-
-    labels = base.mark_text(radius=175, size=12, color="black").encode(
-        theta=alt.Theta("Allocation ($):Q"),
-        text="Legend Label:N",
-    )
-
-    return (
-        (arc + labels)
-        .properties(height=320, background="rgb(210, 200, 191)")
+        .properties(height=340, width=720, background="rgb(210, 200, 191)")
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_legend(labelColor="black", titleColor="black", symbolStrokeColor="black")
         .properties(background="rgb(210, 200, 191)")
