@@ -2797,33 +2797,26 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
         range=["#2f3134", "#7a6c5d", "#a0662c", "#c89f5d", "#d8cabb"],
     )
 
-    arc = (
-        alt.Chart(pie_df)
-        .mark_arc(outerRadius=145, innerRadius=35, stroke="rgb(210, 200, 191)", strokeWidth=1.5)
-        .encode(
-            theta=alt.Theta("Allocation ($):Q"),
-            color=alt.Color("Label:N", scale=color_scale, legend=alt.Legend(title=None, orient="right", labelLimit=260)),
-            tooltip=[
-                alt.Tooltip("Label:N", title="Asset Class"),
-                alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
-                alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
-            ],
-        )
-        .properties(height=320, background="rgb(210, 200, 191)")
+    base = alt.Chart(pie_df)
+
+    arc = base.mark_arc(outerRadius=145, innerRadius=35, stroke="rgb(210, 200, 191)", strokeWidth=1.5).encode(
+        theta=alt.Theta("Allocation ($):Q"),
+        color=alt.Color("Label:N", scale=color_scale, legend=alt.Legend(title=None, orient="right", labelLimit=260)),
+        tooltip=[
+            alt.Tooltip("Label:N", title="Asset Class"),
+            alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
+            alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
+        ],
     )
 
-    labels = (
-        alt.Chart(pie_df)
-        .mark_text(radius=175, size=12, color="black")
-        .encode(
-            theta=alt.Theta("Allocation ($):Q"),
-            text="Legend Label:N",
-        )
-        .properties(height=320, background="rgb(210, 200, 191)")
+    labels = base.mark_text(radius=175, size=12, color="black").encode(
+        theta=alt.Theta("Allocation ($):Q"),
+        text="Legend Label:N",
     )
 
     return (
         (arc + labels)
+        .properties(height=320, background="rgb(210, 200, 191)")
         .configure_view(stroke=None, fill="rgb(210, 200, 191)")
         .configure_legend(labelColor="black", titleColor="black", symbolStrokeColor="black")
         .properties(background="rgb(210, 200, 191)")
