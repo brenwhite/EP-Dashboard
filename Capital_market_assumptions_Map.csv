@@ -1,0 +1,40 @@
+﻿,CW Asset Class,Liquidity
+Equity (Company Ownership),,
+US Equities,U.S. Stocks,Liquid
+International Developed Equities,Non-US Developed,Liquid
+Emerging Markets Equities,Emerging Markets,Liquid
+L/S Tax Aware Equities,Equity L/S HFs,Semi-Liquid
+Specialized Equity Funds,,
+NAVF,Diversified Private Equity,Illiquid
+Project Owl,Diversified Private Equity,Illiquid
+IPPE,Diversified Private Equity,Illiquid
+Government Debt,,
+Individual Treasury Bills,3M SOFR (Cash),Liquid
+USTS,10-yr Treasury,Liquid
+TIPS,10-yr TIPS,Liquid
+GTPIX,Credit Distressed HFs,Semi-Liquid
+RCTIX,Bank Loans,Liquid
+ABLFX,Private Debt (UL),Semi-Liquid
+CELFX,Enhanced Lending,Semi-Liquid
+CCLFX,Private Debt (L1.0),Semi-Liquid
+DFLEX,High Yield Bonds,Liquid
+CADUX,Private Debt (UL),Semi-Liquid
+ODIDX,Private Debt (UL),Semi-Liquid
+AG Twin Brook Capital Income Fund,Private Debt (L1.0),Semi-Liquid
+Ares Strategic Income Fund,Private Debt (L1.0),Semi-Liquid
+Golub Capital Private Credit Fund,Private Debt (L1.0),Semi-Liquid
+Oaktree Strategic Credit Fund,Private Debt (L1.0),Semi-Liquid
+Opportunistic Credit,Credit Distressed HFs,Semi-Liquid
+GoldenTree Select,Credit Distressed HFs,Semi-Liquid
+CEDIX,Credit Distressed HFs,Semi-Liquid
+GoldenTree TacOpps,Credit Distressed HFs,Semi-Liquid
+DK Opps Fund VI,Credit Distressed HFs,Semi-Liquid
+PHYS,Commodity Futures,Liquid
+Commodities,Commodity Futures,Liquid
+Long/Short Quantitative,Macro (Trend) HFs,Semi-Liquid
+Long/Short Hedge Fund,,
+AQR Delphi+,Equity L/S HFs,Semi-Liquid
+AQR Helix,Macro (Trend) HFs,Semi-Liquid
+QFAF,Equity L/S HFs,Semi-Liquid
+Real Estate,Private Real Estate (UL),Illiquid
+Cash & Cash Equivalents,3M SOFR (Cash),Liquid

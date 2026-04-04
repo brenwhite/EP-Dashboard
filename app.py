@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+from difflib import SequenceMatcher
 from html import escape
+from io import StringIO
 import math
 import os
 from pathlib import Path
@@ -21,6 +23,9 @@ st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_c
 CSV_FILENAME = "data.csv"
 FULL_UNIVERSE_SCHEMA_FILENAME = "full_universe_schema.csv"
 MACRO_QUARTERLY_SNAPSHOT_FILENAME = "macro_quarterly_snapshot.csv"
+ASSET_CLASSIFICATION_FILENAME = "asset_classification.csv"
+CAPITAL_MARKET_MAP_FILENAME = "Capital_market_assumptions_Map.csv"
+CLIFFWATER_FILENAME = "cliffwater.csv"
 CLASS_COL = "Classification"
 CURATED_CLASS_COL = "Asset Class"
 FULL_UNIVERSE_GROUP_COL = "Full Universe Group"
@@ -158,6 +163,30 @@ TECHNICAL_FACTOR_LABELS = {
     "OilPrice": "Oil Price",
     "GoldPrice": "Gold Price",
     "USDollar": "US Dollar",
+}
+
+DEFAULT_INTERNAL_TO_CW = {
+    ("Equities", "Large Cap"): "U.S. Stocks",
+    ("Equities", "Mid Cap"): "U.S. Stocks",
+    ("Equities", "Small Cap"): "U.S. Stocks",
+    ("Equities", "All Cap"): "U.S. Stocks",
+    ("Equities", "International"): "Non-US Developed",
+    ("Equities", "Emerging Markets"): "Emerging Markets",
+    ("Debt", "Corporate Bonds"): "Corp Bonds",
+    ("Debt", "Diversified Debt Fund"): "Core U.S. Bonds",
+    ("Debt", "High Yield"): "High Yield Bonds",
+    ("Debt", "International Bonds"): "Emerging Market Debt",
+    ("Debt", "Municipal Bonds"): "Core U.S. Bonds",
+    ("Government Debt", "Govt/Inflation"): "10-yr Treasury",
+    ("Cash & Equivalents", "Cash"): "3M SOFR (Cash)",
+    ("Cash & Equivalents", "Money Markets"): "3M SOFR (Cash)",
+    ("Alternative Assets", "Commodities"): "Commodity Futures",
+    ("Alternative Assets", "Precious Metals"): "Commodity Futures",
+    ("Alternative Assets", "REITs"): "Public REITs",
+    ("Alternative Assets", "Long-Short"): "Equity L/S HFs",
+    ("Alternative Assets", "Alternative Assets"): "Diversified Hedge Funds",
+    ("Alternative Assets", "Private Assets"): "Diversified Private Equity",
+    ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Equity L/S HFs",
 }
 
 FULL_UNIVERSE_PE_CLASSES = {
@@ -1156,6 +1185,320 @@ def load_macro_quarterly_snapshot(csv_name: str) -> pd.DataFrame:
     return df
 
 
+def normalize_text_key(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip().lower()
+    chars = [ch for ch in text if ch.isalnum()]
+    return "".join(chars)
+
+
+def normalize_identifier(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip().upper()
+    chars = [ch for ch in text if ch.isalnum()]
+    return "".join(chars)
+
+
+def infer_column_name(columns: list[str], candidate_groups: list[list[str]]) -> str | None:
+    normalized = {col: normalize_text_key(col) for col in columns}
+    for candidates in candidate_groups:
+        candidate_keys = [normalize_text_key(item) for item in candidates]
+        for col, norm in normalized.items():
+            if norm in candidate_keys:
+                return col
+        for col, norm in normalized.items():
+            if any(key and key in norm for key in candidate_keys):
+                return col
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def load_asset_classification_master(csv_name: str) -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Missing asset classification file: {csv_path}")
+    df = pd.read_csv(csv_path)
+    required = {"Long Name", "Ticker", "CUSIP", "Alternative Identifier", "Class", "Segment"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Asset classification file missing columns: {sorted(missing)}")
+    master = df.copy()
+    master["Display Name"] = master.get("Display Name", master["Long Name"])
+    master["_norm_long_name"] = master["Long Name"].map(normalize_text_key)
+    master["_norm_display_name"] = master["Display Name"].map(normalize_text_key)
+    master["_norm_ticker"] = master["Ticker"].map(normalize_identifier)
+    master["_norm_cusip"] = master["CUSIP"].map(normalize_identifier)
+    master["_norm_alt_id"] = master["Alternative Identifier"].map(normalize_identifier)
+    return master
+
+
+@st.cache_data(show_spinner=False)
+def load_capital_market_map(csv_name: str) -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Missing capital market assumptions map file: {csv_path}")
+    df = pd.read_csv(csv_path)
+    first_col = df.columns[0]
+    out = df.rename(columns={first_col: "Internal Label"})
+    out["Internal Label"] = out["Internal Label"].astype(str).str.strip()
+    out["_norm_label"] = out["Internal Label"].map(normalize_text_key)
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def load_cliffwater_assumptions(csv_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Missing Cliffwater assumptions file: {csv_path}")
+    df = pd.read_csv(csv_path)
+    first_col = df.columns[0]
+    assumptions = df[[first_col, "R % avg", "Vol"]].rename(columns={first_col: "CW Asset Class"}).copy()
+    assumptions["_norm_cw_asset_class"] = assumptions["CW Asset Class"].map(normalize_text_key)
+    correlation = df.rename(columns={first_col: "CW Asset Class"}).copy()
+    return assumptions, correlation
+
+
+def parse_portfolio_input(uploaded_file, pasted_text: str) -> tuple[pd.DataFrame | None, str]:
+    if uploaded_file is not None:
+        name = uploaded_file.name.lower()
+        if name.endswith(".csv"):
+            return pd.read_csv(uploaded_file), f"Uploaded file: {uploaded_file.name}"
+        if name.endswith(".xlsx") or name.endswith(".xls"):
+            return pd.read_excel(uploaded_file), f"Uploaded file: {uploaded_file.name}"
+        raise ValueError("Unsupported upload type. Please upload CSV or Excel.")
+    if pasted_text.strip():
+        return pd.read_csv(StringIO(pasted_text.strip())), "Pasted CSV"
+    return None, "Master file self-check"
+
+
+def build_master_indexes(master_df: pd.DataFrame) -> dict[str, dict[str, list[int]]]:
+    indexes: dict[str, dict[str, list[int]]] = {}
+    for field in ["_norm_cusip", "_norm_alt_id", "_norm_ticker", "_norm_long_name", "_norm_display_name"]:
+        series = master_df[field].fillna("")
+        lookup: dict[str, list[int]] = {}
+        for idx, key in series.items():
+            if not key:
+                continue
+            lookup.setdefault(str(key), []).append(idx)
+        indexes[field] = lookup
+    return indexes
+
+
+def build_assumption_mappers(map_df: pd.DataFrame, cliffwater_df: pd.DataFrame) -> tuple[dict[str, str], dict[str, dict[str, float | str]]]:
+    map_lookup = {
+        row["_norm_label"]: row["CW Asset Class"]
+        for _, row in map_df.iterrows()
+        if row.get("_norm_label") and pd.notna(row.get("CW Asset Class"))
+    }
+    cw_lookup = {
+        row["_norm_cw_asset_class"]: {
+            "CW Asset Class": row["CW Asset Class"],
+            "Expected Return": row["R % avg"],
+            "Volatility": row["Vol"],
+        }
+        for _, row in cliffwater_df.iterrows()
+        if row.get("_norm_cw_asset_class")
+    }
+    return map_lookup, cw_lookup
+
+
+def choose_candidate(master_df: pd.DataFrame, candidate_indices: list[int], security_name_norm: str) -> tuple[pd.Series | None, str]:
+    if not candidate_indices:
+        return None, "unmatched"
+    candidates = master_df.loc[candidate_indices].copy()
+    if len(candidates) == 1:
+        return candidates.iloc[0], "matched"
+    if security_name_norm:
+        exact = candidates[
+            (candidates["_norm_long_name"] == security_name_norm) | (candidates["_norm_display_name"] == security_name_norm)
+        ]
+        if len(exact) == 1:
+            return exact.iloc[0], "matched"
+    return None, "ambiguous"
+
+
+def fuzzy_name_match(master_df: pd.DataFrame, security_name_norm: str) -> tuple[pd.Series | None, str]:
+    if not security_name_norm:
+        return None, "unmatched"
+    name_frame = master_df[["Long Name", "Display Name", "_norm_long_name", "_norm_display_name"]].copy()
+    scores = []
+    for idx, row in name_frame.iterrows():
+        score = max(
+            SequenceMatcher(None, security_name_norm, row["_norm_long_name"]).ratio() if row["_norm_long_name"] else 0.0,
+            SequenceMatcher(None, security_name_norm, row["_norm_display_name"]).ratio() if row["_norm_display_name"] else 0.0,
+        )
+        scores.append((idx, score))
+    scores.sort(key=lambda item: item[1], reverse=True)
+    if not scores or scores[0][1] < 0.92:
+        return None, "unmatched"
+    top_score = scores[0][1]
+    contenders = [idx for idx, score in scores if score >= top_score - 0.015 and score >= 0.92]
+    if len(contenders) > 1:
+        return None, "ambiguous"
+    return master_df.loc[contenders[0]], "matched"
+
+
+def map_to_cliffwater(
+    row: pd.Series,
+    map_lookup: dict[str, str],
+    cw_lookup: dict[str, dict[str, float | str]],
+) -> dict[str, object]:
+    internal_class = row.get("internal class")
+    internal_segment = row.get("internal segment")
+    security_name = row.get("matched security from master file") or row.get("security name")
+    ticker = row.get("matched ticker") or row.get("ticker")
+
+    candidate_labels = [
+        security_name,
+        ticker,
+        f"{internal_class} {internal_segment}" if pd.notna(internal_class) and pd.notna(internal_segment) else None,
+        internal_segment,
+        internal_class,
+    ]
+    cw_asset_class = None
+    map_source = None
+    for label in candidate_labels:
+        key = normalize_text_key(label)
+        if key and key in map_lookup:
+            cw_asset_class = map_lookup[key]
+            map_source = f"capital_map:{label}"
+            break
+    if cw_asset_class is None:
+        cw_asset_class = DEFAULT_INTERNAL_TO_CW.get((internal_class, internal_segment))
+        if cw_asset_class:
+            map_source = "default_class_segment"
+
+    assumptions = cw_lookup.get(normalize_text_key(cw_asset_class), {}) if cw_asset_class else {}
+    return {
+        "Cliffwater asset class": assumptions.get("CW Asset Class", cw_asset_class),
+        "expected return": assumptions.get("Expected Return"),
+        "volatility": assumptions.get("Volatility"),
+        "assumption match source": map_source,
+    }
+
+
+def classify_portfolio(
+    portfolio_df: pd.DataFrame,
+    master_df: pd.DataFrame,
+    map_df: pd.DataFrame,
+    cliffwater_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    columns = list(portfolio_df.columns)
+    account_name_col = infer_column_name(columns, [["account name", "account", "portfolio name", "account title"]])
+    account_type_col = infer_column_name(columns, [["account type", "type", "account category", "registration"]])
+    security_name_col = infer_column_name(columns, [["security name", "asset name", "long name", "name", "description"]])
+    ticker_col = infer_column_name(columns, [["ticker", "symbol", "ticker symbol"]])
+    cusip_col = infer_column_name(columns, [["cusip", "cusip number"]])
+    alt_id_col = infer_column_name(columns, [["alternative identifier", "alt id", "identifier", "security id", "isin", "sedol"]])
+
+    working = portfolio_df.copy()
+    working["account name"] = working[account_name_col] if account_name_col else ""
+    working["account type"] = working[account_type_col] if account_type_col else ""
+    if security_name_col:
+        working["security name"] = working[security_name_col]
+    elif "Long Name" in working.columns:
+        working["security name"] = working["Long Name"]
+    else:
+        working["security name"] = ""
+    working["ticker"] = working[ticker_col] if ticker_col else ""
+    working["CUSIP"] = working[cusip_col] if cusip_col else ""
+    working["alternative identifier"] = working[alt_id_col] if alt_id_col else ""
+
+    indexes = build_master_indexes(master_df)
+    map_lookup, cw_lookup = build_assumption_mappers(map_df, cliffwater_df)
+    diagnostics: list[dict[str, object]] = []
+    classified_rows: list[dict[str, object]] = []
+
+    for _, row in working.iterrows():
+        security_name_norm = normalize_text_key(row.get("security name"))
+        lookup_sequence = [
+            ("exact CUSIP", indexes["_norm_cusip"].get(normalize_identifier(row.get("CUSIP")), [])),
+            ("exact alternative identifier", indexes["_norm_alt_id"].get(normalize_identifier(row.get("alternative identifier")), [])),
+            ("exact ticker", indexes["_norm_ticker"].get(normalize_identifier(row.get("ticker")), [])),
+            (
+                "exact long name",
+                sorted(
+                    set(indexes["_norm_long_name"].get(security_name_norm, []))
+                    | set(indexes["_norm_display_name"].get(security_name_norm, []))
+                ),
+            ),
+        ]
+
+        matched_master = None
+        match_method = None
+        match_status = "unmatched"
+        for method, candidate_indices in lookup_sequence:
+            candidate_indices = list(candidate_indices)
+            if not candidate_indices:
+                continue
+            chosen, status = choose_candidate(master_df, candidate_indices, security_name_norm)
+            if status == "matched" and chosen is not None:
+                matched_master = chosen
+                match_method = method
+                match_status = status
+                break
+            if status == "ambiguous":
+                match_method = method
+                match_status = status
+                break
+
+        if matched_master is None and match_status != "ambiguous":
+            fuzzy_match, fuzzy_status = fuzzy_name_match(master_df, security_name_norm)
+            if fuzzy_status == "matched" and fuzzy_match is not None:
+                matched_master = fuzzy_match
+                match_method = "fuzzy long name"
+                match_status = "matched"
+            elif fuzzy_status == "ambiguous":
+                match_method = "fuzzy long name"
+                match_status = "ambiguous"
+
+        output = {
+            "account name": row.get("account name", ""),
+            "account type": row.get("account type", ""),
+            "security name": row.get("security name", ""),
+            "ticker": row.get("ticker", ""),
+            "CUSIP": row.get("CUSIP", ""),
+            "alternative identifier": row.get("alternative identifier", ""),
+            "matched security from master file": None,
+            "matched ticker": None,
+            "match method": match_method or "no match",
+            "match status": match_status,
+            "internal class": None,
+            "internal segment": None,
+        }
+
+        if matched_master is not None:
+            output["matched security from master file"] = matched_master.get("Long Name")
+            output["matched ticker"] = matched_master.get("Ticker")
+            output["internal class"] = matched_master.get("Class")
+            output["internal segment"] = matched_master.get("Segment")
+
+        flex_text = f"{row.get('account name', '')} {row.get('account type', '')}"
+        if "flex" in str(flex_text).lower():
+            output["internal class"] = "Alternatives with Tax Benefits"
+            output["internal segment"] = "Tax-Aware Hedge Fund"
+            output["match method"] = (
+                f"{output['match method']} + flex override" if output["match method"] != "no match" else "flex override"
+            )
+            output["match status"] = "matched"
+
+        output.update(map_to_cliffwater(pd.Series(output), map_lookup, cw_lookup))
+        classified_rows.append(output)
+        diagnostics.append(
+            {
+                "security name": output["security name"],
+                "ticker": output["ticker"],
+                "CUSIP": output["CUSIP"],
+                "match status": output["match status"],
+                "match method": output["match method"],
+                "matched security from master file": output["matched security from master file"],
+            }
+        )
+
+    return pd.DataFrame(classified_rows), pd.DataFrame(diagnostics)
+
 def compute_market_scores(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
     tickers = sorted(data["Ticker"].dropna().unique().tolist())
@@ -2028,6 +2371,7 @@ def inject_css() -> None:
         .universe-table { min-width: 1080px; }
         .state-table { min-width: 980px; }
         .technical-table { min-width: 1120px; }
+        .classification-table { min-width: 1320px; }
         .market-table thead th {
             background: rgb(195, 185, 176);
             color: rgb(0, 0, 0);
@@ -2251,6 +2595,120 @@ def render_technical_dashboard(technical_df: pd.DataFrame, query_text: str) -> N
         st.markdown(build_technical_table(group_name, group), unsafe_allow_html=True)
 
 
+def build_generic_table(title: str, df: pd.DataFrame, columns: list[str]) -> str:
+    rows: list[str] = []
+    display_df = df[columns].copy() if not df.empty else pd.DataFrame(columns=columns)
+    for _, row in display_df.iterrows():
+        cells = []
+        for col in columns:
+            value = row[col]
+            text = "&mdash;" if pd.isna(value) or value == "" else escape(str(value))
+            klass = "name" if "name" in col.lower() or "security" in col.lower() else "num"
+            cells.append(f"<td class='{klass}'>{text}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    body = "".join(rows) if rows else f"<tr><td colspan='{len(columns)}' class='num'>No records</td></tr>"
+    headers = "".join(f"<th>{escape(col)}</th>" for col in columns)
+    return (
+        f"<section class='group-block'><div class='group-header'>{escape(title)}</div>"
+        "<div class='table-scroll'><table class='market-table classification-table'>"
+        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div></section>"
+    )
+
+
+def render_portfolio_classification_dashboard(
+    classified_df: pd.DataFrame,
+    diagnostics_df: pd.DataFrame,
+    source_label: str,
+) -> None:
+    st.markdown(
+        f"""
+        <section class="group-block">
+            <div class="group-header">Portfolio Classification Source</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(source_label)
+
+    matched = classified_df[classified_df["match status"] == "matched"].copy()
+    unmatched = classified_df[classified_df["match status"] == "unmatched"].copy()
+    ambiguous = classified_df[classified_df["match status"] == "ambiguous"].copy()
+
+    if not classified_df.empty:
+        for class_name, class_group in matched.groupby("internal class", dropna=False):
+            class_label = "Unclassified" if pd.isna(class_name) else str(class_name)
+            with st.expander(f"{class_label} ({len(class_group)})", expanded=False):
+                for segment_name, segment_group in class_group.groupby("internal segment", dropna=False):
+                    segment_label = "Unsegmented" if pd.isna(segment_name) else str(segment_name)
+                    with st.expander(f"{segment_label} ({len(segment_group)})", expanded=False):
+                        st.markdown(
+                            build_generic_table(
+                                f"{class_label} > {segment_label}",
+                                segment_group,
+                                [
+                                    "account name",
+                                    "account type",
+                                    "security name",
+                                    "ticker",
+                                    "CUSIP",
+                                    "alternative identifier",
+                                    "matched security from master file",
+                                    "match method",
+                                    "internal class",
+                                    "internal segment",
+                                    "Cliffwater asset class",
+                                    "expected return",
+                                    "volatility",
+                                ],
+                            ),
+                            unsafe_allow_html=True,
+                        )
+
+    st.markdown(
+        build_generic_table(
+            "Matched Securities Review",
+            matched,
+            [
+                "security name",
+                "ticker",
+                "CUSIP",
+                "matched security from master file",
+                "match method",
+                "internal class",
+                "internal segment",
+                "Cliffwater asset class",
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        build_generic_table(
+            "Unmatched Securities Review",
+            unmatched,
+            ["account name", "security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        build_generic_table(
+            "Ambiguous Securities Review",
+            ambiguous,
+            ["account name", "security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+        ),
+        unsafe_allow_html=True,
+    )
+
+    assumptions_gaps = matched[matched["Cliffwater asset class"].isna()].copy()
+    st.markdown(
+        build_generic_table(
+            "Assumption Mapping Gaps",
+            assumptions_gaps,
+            ["security name", "matched security from master file", "internal class", "internal segment", "match method"],
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) -> None:
     if factor_df.empty:
         st.info("The FactorsToday API could not be reached. The State of the Market dashboard is temporarily unavailable.")
@@ -2301,6 +2759,9 @@ def main() -> None:
     raw_df = load_market_data(CSV_FILENAME)
     template_df = load_curated_template()
     full_universe_schema_df = load_full_universe_schema(FULL_UNIVERSE_SCHEMA_FILENAME)
+    asset_master_df = load_asset_classification_master(ASSET_CLASSIFICATION_FILENAME)
+    capital_map_df = load_capital_market_map(CAPITAL_MARKET_MAP_FILENAME)
+    cliffwater_assumptions_df, cliffwater_correlation_df = load_cliffwater_assumptions(CLIFFWATER_FILENAME)
     scored_df = compute_market_scores(raw_df)
     file_enrichment_df = build_file_enrichment(raw_df)
     try:
@@ -2331,12 +2792,15 @@ def main() -> None:
         st.header("Dashboard")
         dashboard_mode = st.radio(
             "View",
-            ["Curated Overview", "Full Universe", "Technical Overview", "State of the Market", "Macro Dashboard"],
+            ["Curated Overview", "Full Universe", "Portfolio Classification", "Technical Overview", "State of the Market", "Macro Dashboard"],
             index=0,
         )
         if dashboard_mode == "State of the Market":
             search_label = "Search Factor"
             search_placeholder = "Market, Momentum, GoldPrice..."
+        elif dashboard_mode == "Portfolio Classification":
+            search_label = "Search Holding"
+            search_placeholder = "Ticker, CUSIP, or security name..."
         elif dashboard_mode == "Technical Overview":
             search_label = "Search Entity"
             search_placeholder = "SPY, Gold Price, Value..."
@@ -2344,6 +2808,12 @@ def main() -> None:
             search_label = "Search Ticker"
             search_placeholder = "SPY, TLT, GLD..."
         ticker_query = st.text_input(search_label, placeholder=search_placeholder)
+        if dashboard_mode == "Portfolio Classification":
+            portfolio_upload = st.file_uploader("Upload Portfolio", type=["csv", "xlsx", "xls"])
+            pasted_portfolio_text = st.text_area("Or Paste Portfolio CSV", height=120)
+        else:
+            portfolio_upload = None
+            pasted_portfolio_text = ""
         if dashboard_mode == "Curated Overview":
             selected_curated_classes = st.multiselect("Asset Class", options=curated_classes, default=curated_classes)
             selected_universe_classes = universe_classes
@@ -2385,6 +2855,31 @@ def main() -> None:
     elif dashboard_mode == "Technical Overview":
         technical_df = build_technical_overview_data(template_df)
         render_technical_dashboard(technical_df, query_text)
+    elif dashboard_mode == "Portfolio Classification":
+        portfolio_input_df, source_label = parse_portfolio_input(portfolio_upload, pasted_portfolio_text)
+        if portfolio_input_df is None:
+            portfolio_input_df = asset_master_df[["Long Name", "Ticker", "CUSIP", "Alternative Identifier"]].copy()
+            portfolio_input_df["Account Name"] = "Asset Classification Master"
+            portfolio_input_df["Account Type"] = "Reference"
+        classified_df, diagnostics_df = classify_portfolio(
+            portfolio_input_df,
+            asset_master_df,
+            capital_map_df,
+            cliffwater_assumptions_df,
+        )
+        if query_text:
+            query = query_text.lower()
+            classified_df = classified_df[
+                classified_df["security name"].fillna("").str.lower().str.contains(query)
+                | classified_df["ticker"].fillna("").astype(str).str.lower().str.contains(query)
+                | classified_df["CUSIP"].fillna("").astype(str).str.lower().str.contains(query)
+            ]
+            diagnostics_df = diagnostics_df[
+                diagnostics_df["security name"].fillna("").str.lower().str.contains(query)
+                | diagnostics_df["ticker"].fillna("").astype(str).str.lower().str.contains(query)
+                | diagnostics_df["CUSIP"].fillna("").astype(str).str.lower().str.contains(query)
+            ]
+        render_portfolio_classification_dashboard(classified_df, diagnostics_df, source_label)
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:

@@ -1,0 +1,554 @@
+Here’s the Codex-ready spec sheet. Because apparently the machines need instructions now too.
+
+One important constraint first: FactorsToday gives you factor and stock data, exposures, sector/factor returns, and histories, but it does not appear to expose native MACD, DeMark, Ichimoku, head-and-shoulders, or support/resistance signals directly. Those need to be computed downstream from historical price series returned by the API. The API is currently open, requires no key, and is rate-limited to 10 requests per second per IP.
+
+FactorsToday extraction spec for Codex
+Objective
+
+Build a script that reads a market transcript and outputs a structured summary of:
+
+Assets / factors / tickers mentioned
+Charts referenced
+Signals explicitly called out by the guest
+API-backed evidence available from FactorsToday
+Derived signals to compute from historical series when the API does not provide them natively
+Output schema
+
+Use this JSON schema for each extracted item:
+
+{
+  "source_text": "exact sentence or short excerpt from transcript",
+  "entity_type": "index | factor | stock | etf | sector | breadth | concept",
+  "display_name": "S&P 500",
+  "symbol_or_factor_id": "Market",
+  "factorstoday_lookup_type": "factor | stock | none",
+  "chart_type": "monthly price | weekly ratio | breadth | sector returns | relative strength",
+  "signal_type": "macd_sell | macd_buy | demark_13 | breakout | breakdown | head_shoulders | support | resistance | breadth_deterioration | rotation | consolidation | oversold_buy | overbought_exhaustion | correlation_observation",
+  "signal_direction": "bullish | bearish | neutral | mixed",
+  "timeframe": "daily | weekly | monthly | unspecified",
+  "guest_claim": "Monthly MACD sell signal on S&P 500",
+  "api_support_level": "direct | derived | unsupported",
+  "api_endpoints": [
+    "/api/factor-history/Market?days=1500"
+  ],
+  "derived_calculations": [
+    "monthly_macd_12_26_9"
+  ],
+  "notes": "Need to aggregate daily closes to month-end before MACD calculation"
+}
+Entity mapping table
+
+Map transcript references to FactorsToday entities like this:
+
+Transcript term	Use in FactorsToday	Lookup
+S&P 500	Market factor	factor
+WTI crude oil / oil	OilPrice factor	factor
+Gold	GoldPrice factor	factor
+Value	Value factor	factor
+Growth	Growth factor	factor
+Breadth / market breadth	Breadth or MarketBreadth if present in catalog	factor
+Technology sector	Sector: Technology	factor
+Energy sector	Sector: Energy	factor
+Financials	Sector: Financials or exact catalog value	factor
+Utilities	Sector: Utilities	factor
+Consumer Staples	Sector: Consumer Staples	factor
+Communication Services	Sector: Communication Services	factor
+Consumer Discretionary	Sector: Consumer Discretionary	factor
+Meta	META	stock
+Apple	AAPL	stock
+Microsoft	MSFT	stock
+Amazon	AMZN	stock
+Alphabet	GOOGL or GOOG	stock
+Nike	NKE	stock
+TAC ETF	TAC	stock/ETF if searchable
+
+Start by pulling the factor catalog because factor IDs and display names are defined there, including market/macro, style, sector, industry, country, and custom factors.
+
+FactorsToday endpoints to use
+1) Discover factor IDs
+
+Use:
+
+GET /api/factors/catalog
+
+This is the starting point for available factor IDs and categories. It includes market/macro factors such as Market, OilPrice, GoldPrice, InterestRate, and USDollar, plus style and sector factors.
+
+2) Get factor history for chart-based signals
+
+Use:
+
+GET /api/factor-history/:factorId?days=N
+
+This returns chronological {date, close} history for a factor and is the main input for MACD, moving averages, trend detection, and support/resistance calculations.
+
+Recommended windows:
+
+1500 days for monthly MACD and long-cycle work
+500 days for weekly signals
+252 days for 1-year context
+3) Get stock history for stock-specific technical patterns
+
+Use:
+
+GET /api/stock-history/:ticker?days=N
+
+This returns historical price data for a stock ticker and is the correct source for things like META head-and-shoulders, NKE post-earnings gap analysis, or moving-average breaks.
+
+4) Search ambiguous tickers or names
+
+Use:
+
+GET /api/stocks/search?q=...
+
+This searches stocks and factors by ticker or name. Useful when the transcript says “Meta” instead of META, because humans adore ambiguity.
+
+5) Pull multi-horizon factor returns and z-scores
+
+Use:
+
+GET /api/factor-returns/historic
+GET /api/factor-returns/intraday
+
+Historic returns provide 3d, 5d, 10d, 21d, 63d, 126d, and 252d returns with z-scores for all factors. Intraday provides real-time factor performance and z-scores. These are useful for “rotation”, “extreme move”, and “unusual divergence” flags.
+
+6) Pull factor pair divergence data
+
+Use:
+
+GET /api/factor-pairs?mode=all
+GET /api/factor-pair-history/:factor1/:factor2?timeframe=21d
+
+This is the best API-native route for claims like value vs growth rotation, sector-vs-sector spread moves, or unusual pair divergences. The pair endpoint returns spread returns and z-scores across multiple windows.
+
+7) Pull factor correlations
+
+Use:
+
+GET /api/factor-correlations?days=63
+
+This supports transcript claims about changing relationships among factors, such as growth/value inversions or oil correlation observations, to the extent the factor exists in the catalog.
+
+Signal support matrix
+Directly supported by API
+
+These can be obtained without inventing much:
+
+factor history
+stock history
+factor returns by timeframe
+factor z-scores
+factor pair spread returns and z-scores
+correlations between factors
+stock/factor search
+sector and style factors where catalog IDs exist
+Derived from API history
+
+Codex should compute these itself:
+
+MACD buy/sell
+50-day / 200-day moving averages
+monthly / weekly aggregation
+support / resistance
+breakout / breakdown
+relative strength ratio charts
+consolidation / range detection
+trend state
+parabolic move heuristics
+gap detection for stocks
+head-and-shoulders heuristic detection if you really want to tempt fate
+Unsupported or weakly supported
+
+These are not native and may require custom logic or be unreliable:
+
+DeMark 13 / Sequential
+Ichimoku cloud
+Fibonacci retracement
+“percentage of stocks above 200-day MA” unless you approximate it from the stock universe yourself
+guest-drawn support levels like 6130–6175 unless you derive from local extrema and retracement logic
+Derived calculation rules
+A. Monthly MACD
+
+For claims like:
+
+“S&P 500 monthly MACD sell signal”
+“WTI crude oil monthly MACD buy signal”
+
+Use factor history for Market and OilPrice. Aggregate daily closes to month-end closes, then compute:
+
+fast EMA: 12
+slow EMA: 26
+signal EMA: 9
+
+Signal rules:
+
+MACD buy = MACD line crosses above signal line on latest completed month
+MACD sell = MACD line crosses below signal line on latest completed month
+
+Endpoints:
+
+GET /api/factor-history/Market?days=1500
+GET /api/factor-history/OilPrice?days=1500
+
+These factor histories are available, but the MACD itself must be computed client-side.
+
+B. Weekly value vs growth rotation
+
+For claims like:
+
+“value outperforming growth”
+“major reversal favoring value”
+
+Use pair spreads first:
+
+GET /api/factor-pairs?mode=all
+
+If direct pair output is insufficient, compute ratio or spread from histories:
+
+GET /api/factor-history/Value?days=750
+GET /api/factor-history/Growth?days=750
+
+Derived metrics:
+
+ratio = Value / Growth
+rolling returns at 21d, 63d, 126d, 252d
+trend filter: 10-week MA > 40-week MA on ratio
+breakout flag if ratio exceeds prior 26-week high
+
+The pair endpoints explicitly support spread returns and z-scores across these horizons.
+
+C. Gold exhaustion / consolidation
+
+For claims like:
+
+“gold needs consolidation”
+“countertrend signal on monthly chart”
+
+Use:
+
+GET /api/factor-history/GoldPrice?days=1500
+
+Compute:
+
+monthly MACD
+14-period monthly RSI
+distance from 12-month moving average
+rolling max drawdown since latest high
+range compression over trailing 8 to 12 weeks
+
+Treat as:
+
+overbought_exhaustion if RSI > 70 and price is >2 std dev above 12m trend
+consolidation if price stops making higher highs and realized vol declines
+
+Gold factor history is available; the “countertrend signal” itself must be your logic, not the API’s.
+
+D. Mega-cap weakness / META breakdown
+
+Use stock histories:
+
+GET /api/stock-history/META?days=750
+GET /api/stock-history/AAPL?days=750
+GET /api/stock-history/MSFT?days=750
+GET /api/stock-history/AMZN?days=750
+GET /api/stock-history/GOOGL?days=750
+
+Compute:
+
+50d MA and 200d MA
+relative strength vs Market factor or SPY proxy
+local peak/trough sequence for breakdowns
+optional head-and-shoulders heuristic:
+left shoulder, head, right shoulder peaks
+neckline from troughs
+confirm only if close breaks neckline
+
+This is all derived from stock history because the API does not provide pattern labels.
+
+E. Breadth deterioration
+
+Transcript references breadth, including percentage of stocks above 200-day MA. The API docs expose a breadth factor in correlation examples and factor sets, but do not clearly document a dedicated endpoint for “% above 200-day MA.”
+
+Use one of two approaches:
+
+Preferred
+
+Pull Breadth or MarketBreadth from factor catalog and factor history if present.
+
+Fallback
+
+Approximate breadth by:
+pull stock universe
+for each stock, fetch enough history
+compute whether close > 200d MA
+calculate percentage
+
+That fallback is expensive and kind of obnoxious, because naturally humans want breadth but not the bill for the requests.
+
+F. Support / resistance and breakout / breakdown
+
+Derived from factor or stock history:
+
+Rules:
+
+support = recent swing low cluster over last 3 to 6 months
+resistance = recent swing high cluster
+breakout = close above prior resistance by at least 1% and preferably confirmed for 2 bars
+breakdown = close below support by at least 1%
+
+For the S&P claim, since the API uses factors and not literal SPX spot index levels in the docs, Codex should capture the guest-stated level from transcript text separately from API-derived technical state.
+
+Transcript extraction instructions
+Phase 1: NLP extraction
+
+Parse the transcript into candidate records with:
+
+asset/factor/ticker names
+signal phrases
+timeframes
+quoted price levels
+whether the statement is descriptive vs predictive
+
+Pattern examples:
+
+MACD sell signal
+MACD buy signal
+DeMark
+13s
+breakout above
+breakdown below
+support level
+head and shoulders
+oversold
+overbought
+relative performance
+rotation
+correlation
+consolidation
+higher highs and higher lows
+Phase 2: API mapping
+
+For each entity:
+
+Try factor catalog match
+Else try stock search
+Else mark as unsupported
+Phase 3: Evidence building
+
+For each signal:
+
+if direct API support exists, store endpoint and response fields
+if derived, store endpoint + calculation recipe
+if unsupported, preserve transcript claim but mark unsupported
+Recommended extraction output for this transcript
+
+Codex should produce records roughly like these:
+
+[
+  {
+    "display_name": "S&P 500",
+    "symbol_or_factor_id": "Market",
+    "entity_type": "factor",
+    "chart_type": "monthly price",
+    "signal_type": "macd_sell",
+    "signal_direction": "bearish",
+    "timeframe": "monthly",
+    "guest_claim": "new monthly MACD sell signal",
+    "api_support_level": "derived",
+    "api_endpoints": ["/api/factor-history/Market?days=1500"],
+    "derived_calculations": ["aggregate_to_month_end", "macd_12_26_9"],
+    "notes": "Use factor history because MACD is not native"
+  },
+  {
+    "display_name": "WTI Crude Oil",
+    "symbol_or_factor_id": "OilPrice",
+    "entity_type": "factor",
+    "chart_type": "monthly price",
+    "signal_type": "macd_buy",
+    "signal_direction": "bullish",
+    "timeframe": "monthly",
+    "guest_claim": "monthly MACD buy signal in February",
+    "api_support_level": "derived",
+    "api_endpoints": ["/api/factor-history/OilPrice?days=1500"],
+    "derived_calculations": ["aggregate_to_month_end", "macd_12_26_9"]
+  },
+  {
+    "display_name": "Gold",
+    "symbol_or_factor_id": "GoldPrice",
+    "entity_type": "factor",
+    "chart_type": "monthly price",
+    "signal_type": "consolidation",
+    "signal_direction": "neutral",
+    "timeframe": "monthly",
+    "guest_claim": "off year for gold, likely sideways or sideways-to-lower",
+    "api_support_level": "derived",
+    "api_endpoints": ["/api/factor-history/GoldPrice?days=1500"],
+    "derived_calculations": ["monthly_trend", "rsi_14", "volatility_compression"]
+  },
+  {
+    "display_name": "Value vs Growth",
+    "symbol_or_factor_id": "Value|Growth",
+    "entity_type": "factor_pair",
+    "chart_type": "weekly ratio",
+    "signal_type": "rotation",
+    "signal_direction": "bullish_for_value",
+    "timeframe": "weekly",
+    "guest_claim": "significant reversal from growth into value",
+    "api_support_level": "direct_and_derived",
+    "api_endpoints": [
+      "/api/factor-pairs?mode=all",
+      "/api/factor-history/Value?days=750",
+      "/api/factor-history/Growth?days=750"
+    ],
+    "derived_calculations": ["ratio_value_over_growth", "10w_40w_trend"]
+  },
+  {
+    "display_name": "Meta",
+    "symbol_or_factor_id": "META",
+    "entity_type": "stock",
+    "chart_type": "daily or weekly price",
+    "signal_type": "head_shoulders_breakdown",
+    "signal_direction": "bearish",
+    "timeframe": "unspecified",
+    "guest_claim": "breakdown from a head and shoulders top in Meta",
+    "api_support_level": "derived",
+    "api_endpoints": ["/api/stock-history/META?days=750"],
+    "derived_calculations": ["pattern_detection_head_shoulders", "neckline_break"]
+  },
+  {
+    "display_name": "Nike",
+    "symbol_or_factor_id": "NKE",
+    "entity_type": "stock",
+    "chart_type": "post-earnings price",
+    "signal_type": "oversold_buy",
+    "signal_direction": "bullish",
+    "timeframe": "short_term",
+    "guest_claim": "buy signals in Nike after earnings gap down",
+    "api_support_level": "derived",
+    "api_endpoints": ["/api/stock-history/NKE?days=252"],
+    "derived_calculations": ["gap_down_detection", "exhaustion_check"]
+  }
+]
+Codex implementation notes
+Request pacing
+
+Respect the published rate limit of 10 requests/sec/IP. Batch factor calls first, then stock calls. Cache factor catalog and history.
+
+Encoding
+
+Factor names with punctuation or spaces may need URL encoding in history endpoints, and some endpoints require base64 encoding for factor names, such as factor loadings and factor equation. The docs explicitly note URL encoding for factor-history and base64 encoding for factor-loadings and factor-equation.
+
+Useful defaults
+factor history: days=1500 for monthly work
+stock history: days=750
+pair history timeframe: 21d or 63d
+correlations: days=63
+Confidence tagging
+
+Add:
+
+high_confidence when transcript claim maps cleanly to factor/stock + derivable signal
+medium_confidence when API entity exists but signal is heuristic
+low_confidence when no clean API mapping exists
+Minimal prompt to give Codex
+Build a Python script that:
+1. accepts a transcript as input,
+2. extracts all assets/factors/tickers and technical signals mentioned,
+3. maps each entity to the FactorsToday API,
+4. pulls supporting history/returns data,
+5. computes derived technical signals when the API does not provide them directly,
+6. outputs a JSON array using the provided schema.
+
+Use these FactorsToday endpoints:
+- /api/factors/catalog
+- /api/factor-history/:factorId?days=N
+- /api/factor-returns/historic
+- /api/factor-pairs?mode=all
+- /api/factor-pair-history/:factor1/:factor2?timeframe=21d
+- /api/factor-correlations?days=63
+- /api/stocks/search?q=...
+- /api/stock-history/:ticker?days=N
+
+Rules:
+- Treat MACD, moving averages, support/resistance, breakout/breakdown, consolidation, and chart patterns as derived calculations.
+- Do not assume DeMark or Ichimoku are available from the API.
+- Use factor IDs from catalog, including Market, OilPrice, GoldPrice, Value, Growth, and sector IDs.
+- Respect rate limit of 10 requests/sec.
+- Return both transcript claims and API-backed evidence.
+- If a claim cannot be validated directly, mark api_support_level as "derived" or "unsupported".
+Bottom line
+
+This API is good enough for:
+
+S&P proxy via Market
+oil via OilPrice
+gold via GoldPrice
+value/growth rotation
+sector rotation
+stock-level history for META, NKE, and the rest
+
+It is not good enough to magically hand you Katie Stockton’s exact chart annotations. Codex will need to compute most of the technical signals itself from the histories, because naturally the API gives you ingredients, not dinner.
+
+If you want, I can turn this into an actual Codex prompt plus Python starter file next.
+
+the API also has ETFs. the factors are normalized to 10 vol, does that mess up the calculations any bit?
+Thought for 19s
+
+Yes, ETFs are in there. The API docs say /api/stocks/types includes distinct stock types such as Common Stock, ETF, ADR, and factor-loadings can be filtered with type=all|common|etf|both. The stock search also surfaces ETF names and tickers.
+
+On the “factors normalized to 10 vol” part: I could not find that stated in the public API docs I checked, so I would not hard-code that assumption without verifying from the vendor or response behavior. The docs do say factor endpoints return factor returns and factor-history returns {date, close} time series, while stock-history returns actual ticker price history.
+
+Practical answer:
+
+For ETFs/stocks: no real problem. Use /api/stock-history/:ticker. That is actual price history, so MACD, moving averages, gaps, support/resistance, all normal.
+For factors: it depends on what “normalized to 10 vol” means.
+
+If the factor series is just a constant rescaling of returns, then:
+
+MACD crossovers
+moving average crossovers
+trend direction
+breakout logic based on the factor’s own history
+
+will usually be fine, because multiplying a series by a constant changes magnitude, not the shape. Humanity occasionally stumbles into linear algebra, and this is one of those times.
+
+If instead the factor is dynamically volatility-targeted over time to 10%:
+
+the path is altered
+trend persistence can be smoothed or distorted
+absolute move size is less meaningful
+comparisons of “strength” across factors get muddier
+support/resistance on the normalized factor series becomes less trustworthy as a market-price analog
+
+So the rule should be:
+
+Use factor series for factor analytics, not price-chart cosplay.
+That means:
+
+Fine for: factor momentum, regime shifts, factor-vs-factor spreads, rolling z-scores
+Less fine for: literal chart pattern detection like head-and-shoulders, gap analysis, Fibonacci, exact support/resistance
+
+For your use case, I’d tell Codex to do this:
+
+Use ETF/stock history whenever the transcript is about a traded instrument
+SPY instead of Market if you want S&P-style chart signals
+USO or crude-linked ETF only if you intentionally want ETF behavior, otherwise use the factor for macro signal work
+GLD for gold charting if you want a traded proxy
+META, NKE, TAC directly from stock-history
+Use factor history for style/sector/macro relationships
+Value vs Growth
+Energy vs Tech
+Gold factor vs Market factor
+Oil vs Market correlations
+Do not mix interpretations
+A MACD on Value factor is a factor momentum signal
+A MACD on IWD is an ETF/chart signal
+Those are related, but not interchangeable. Because finance apparently enjoys making two things sound identical while meaning different things.
+
+A clean Codex rule would be:
+
+If entity is a tradable ticker (stock or ETF), use /api/stock-history and treat outputs as price-based technicals.
+If entity is a factor, use /api/factor-history and treat outputs as normalized factor-series technicals.
+Do not use factor-history for gap detection, candlestick patterns, or exact support/resistance.
+Allow MACD/MA/relative-strength calculations on factor-history, but label them as factor signals, not price signals.
+
+My blunt recommendation: for transcript extraction, prefer ETFs/stocks wherever possible when the guest is talking like a chart technician. Use factors mainly for style/sector/macro rotation. That will keep the output much less fake-precise.

@@ -1,0 +1,322 @@
+API Documentation
+Introduction
+FactorsToday provides a robust API for quantitative analysts and developers to integrate our factor models into their existing workflows. Our RESTful API allows you to programmatically access live returns, historical data, and individual stock factor loadings.
+
+Manual Downloads
+Download complete datasets directly without writing code:
+
+⬇
+Download All Factor Returns (Excel)
+{}
+Download All Factor Returns (JSON)
+Daily returns for all ~180 factors since 2010. Factors ordered by category (Basic, Sector, Industry, Country, Custom).
+Factor Endpoints
+GET /api/factors/catalog START HERE
+Discover all available factors. Returns a comprehensive catalog of all factor IDs organized by category (Market/Macro, Style, Sector, Industry, Country, Custom), with descriptions and usage examples.
+
+Categories include:
+
+market_macro - Market, OilPrice, GoldPrice, InterestRate, USDollar
+style - SmallSize, Momentum, Value, Quality, LowVolatility, Growth, BetaFactor, DividendYield, Liquidity
+sector - 11 GICS sectors (Technology, Financial, Healthcare, etc.)
+industry - ~50 industries (Semiconductors, Biotechnology, Regional Banks, etc.)
+country - ~40 countries (Japan, Germany, Brazil, China, etc.)
+custom - ~80 AI-discovered thematic baskets
+Response includes: factor_id, display_name, description for each factor, plus API usage examples.
+
+GET /api/factor-returns/intraday
+Returns real-time intraday performance data with z-scores for all tracked factors. Optimized for frequent polling (every 5 seconds).
+
+Response: { "Market": { "value": 0.00123, "zScore": 0.45 }, ... }
+
+GET /api/factor-returns/historic
+Returns historic multi-day returns (3d, 5d, 10d, 21d, 63d, 126d, 252d) with z-scores for all factors. Designed to be fetched once on page load.
+
+Response: { "Market": { "3d": { "value": 0.012, "zScore": 0.8 }, "5d": {...}, "21d": {...}, ... }, ... }
+
+GET /api/factor-history/:factorId
+Retrieves historical time-series data for a specific factor. Returns date and close values in chronological order.
+
+Query params: ?days=N (default: 365)
+
+GET /api/factor-loadings/:factorNameEncoded
+Returns stocks and their beta exposures to a specific factor. The factor name must be base64 encoded to handle special characters.
+
+Query params: ?type=all|common|etf|both
+
+GET /api/factor-sparklines
+Returns daily returns for all factors over a specified period, suitable for rendering sparkline charts.
+
+Query params: ?days=N (default: 30)
+
+GET /api/factor-correlations
+Returns the correlation matrix for all basic factors over a specified time period.
+
+Query params: ?days=N (default: 63, options: 3, 5, 10, 21, 63, 126, 252)
+
+GET /api/factor-composition/:factorName
+Returns the component stocks/ETFs that make up a custom factor basket, including their weights.
+
+GET /api/factor-equation/:factorNameEncoded
+Returns the replication equation for a specific factor, including all component weights (tickers and factors). The factor name must be base64 encoded.
+
+Response: { "factor_name": "...", "equation": { "ticker1": weight, "Factor1": weight, ... } }
+
+GET /api/factors
+Returns a list of all available factors with calculated performance metrics (1-day, 1-week, 1-month returns).
+
+GET /api/factors/download-all
+Downloads all factor daily returns. Returns a pivoted table with dates as rows and factor names as columns. Factors are ordered by category: Basic, Sector, Industry, Country, Custom. Custom Group names are shown with their full descriptive names.
+
+Query params: ?format=excel|json (default: excel)
+
+Response (Excel): Excel file (.xlsx) with frozen header row, containing daily returns as decimals (e.g., 0.01 = 1%).
+
+Response (JSON): { "meta": { "totalDates": N, "totalFactors": N, "factors": [...] }, "data": [{ "date": "YYYY-MM-DD", "Market": 0.001, ... }, ...] }
+
+Factor Pairs Endpoints
+GET /api/factor-pairs
+Returns spread returns (Factor1 - Factor2) and z-scores for all factor pairs across multiple timeframes (1d, 3d, 5d, 10d, 21d, 63d, 126d, 252d). Useful for identifying unusual factor divergences and pair trading opportunities.
+
+Query params: ?mode=standard|sectors|sectors-only|industries|industries-only|all
+
+Response: { "factors": [...], "pairs": { "Factor1|Factor2": { "1d": { "spreadReturn": 0.01, "zScore": 2.3 }, ... } } }
+
+GET /api/factor-pair-history/:factor1/:factor2
+Returns historical rolling spread returns for a specific factor pair. The spread is calculated as Factor1 return minus Factor2 return over the specified timeframe window.
+
+Query params: ?timeframe=1d|3d|5d|10d|21d|63d|126d|252d (default: 21d)
+
+Response: { "factor1": "...", "factor2": "...", "timeframe": "21d", "history": [{ "date": "2024-01-15", "rollingReturn": 0.023 }, ...] }
+
+Stock Endpoints
+GET /api/stocks/search
+Searches both stocks and factors by name or ticker. Supports multi-word queries where each word must match. Results are ranked by trading volume.
+
+Query params: ?q=searchterm (required)
+
+GET /api/stocks/popular
+Returns the top 100 most popular stocks ranked by market capitalization and trading volume.
+
+Query params: ?type=stockType (optional filter by stock type)
+
+GET /api/stocks/types
+Returns a list of all distinct stock types available in the database (e.g., Common Stock, ETF, ADR).
+
+GET /api/stock-history/:ticker
+Returns historical price data (date and close) for a specific stock ticker in chronological order.
+
+Query params: ?days=N (default: 252, roughly 1 trading year)
+
+GET /api/stock-info/:ticker
+Returns metadata for a specific stock including full name, stock type, and current price.
+
+GET /api/stock-loadings/:ticker
+Fetches the most recent factor betas and exposures for a stock ticker. Returns all factor loadings sorted by beta (exposure strength), along with model quality metrics (R² and Adjusted R²).
+
+Query params: ?model=modelName (default: "All Factors")
+
+Available models: Base, Base + Sector, Base + Sector + Industry, All Factors
+
+Response includes: r_squared, adjusted_r_squared, n_active_factors
+
+GET /api/related-stocks/:ticker
+Finds stocks with similar factor exposures using cosine similarity. Returns stocks ranked by how closely their factor profile matches the target.
+
+Query params: ?limit=N (default: 10), ?model=modelName (default: "All Factors")
+
+GET /api/stock-corporate-action/:ticker
+Returns any corporate action (dividend or stock split) for a ticker where today is the ex-date. Used to adjust previous close prices for accurate intraday return calculations.
+
+Response: { "ticker": "AAPL", "corporate_action": { "action_type": "dividend", "amount": 0.25 } } or null if no corporate action today.
+
+Note: For splits, the response includes split_ratio (e.g., 5 for a 5:1 split). The previous close should be divided by this ratio for accurate returns.
+
+Leaderboard Endpoints
+GET /api/leaderboard
+Returns the full performance leaderboard with Sharpe and Sortino ratios for all eligible securities across multiple timeframes (1Y, 3Y, 5Y, 10Y, 20Y). Includes annualized returns, volatility, and maximum drawdown metrics.
+
+Response:
+
+{
+  "date": "2025-02-15",
+  "data": [
+    {
+      "ticker": "AAPL",
+      "full_name": "Apple Inc.",
+      "stock_type": "Common Stock",
+      "sector": "Technology",
+      "y1_sharpe": 1.25,
+      "y1_sortino": 1.85,
+      "y1_return": 0.32,
+      "y1_volatility": 0.22,
+      "y1_max_drawdown": -0.15,
+      "y3_sharpe": 0.95,
+      "y3_sortino": 1.42,
+      "y5_sharpe": 1.10,
+      "y10_sharpe": 1.35,
+      "lifetime_sharpe": 1.28,
+      ...
+    }
+  ]
+}
+Notes:
+
+Returns are expressed as decimals (0.32 = 32%)
+Drawdowns are negative (−0.15 = −15%)
+lifetime_* fields contain 20-year metrics
+Response is cached for performance
+GET /api/leaderboard/:ticker
+Returns Sharpe and Sortino ratios for a specific ticker across all available timeframes. Useful for displaying risk-adjusted metrics on individual stock pages.
+
+Example: GET /api/leaderboard/AAPL
+
+Response:
+
+{
+  "data": {
+    "ticker": "AAPL",
+    "y1_sharpe": 1.25,
+    "y1_sortino": 1.85,
+    "y1_return": 0.32,
+    "y1_volatility": 0.22,
+    "y1_max_drawdown": -0.15,
+    "y3_sharpe": 0.95,
+    "y3_sortino": 1.42,
+    "y5_sharpe": 1.10,
+    "y10_sharpe": 1.35,
+    "lifetime_sharpe": 1.28,
+    ...
+  }
+}
+Note: Returns { "data": null } if the ticker is not found in the leaderboard (e.g., doesn't meet eligibility criteria).
+
+Movers Endpoint
+/api/movers
+Returns intraday top movers: gainers, losers, and most active stocks during regular market hours. Change percentages are calculated from the previous close, adjusted for corporate actions. Includes ticker, full name, sector, market cap, last price, change %, day high/low, and total volume. Results are cached for 1 minute.
+
+Portfolio & Screener Endpoints
+POST /api/portfolio/analyze
+Analyzes a portfolio's factor exposures. Accepts an array of holdings with ticker and shares, calculates weighted factor exposures, identifies concentration risks, and suggests hedging strategies.
+
+Body: { "holdings": [{ "ticker": "AAPL", "shares": 100 }, ...] }
+
+Query params: ?model=modelName (default: "All Factors")
+
+GET /api/screener/stocks-by-factor/:factorName
+Returns all stocks ranked by their exposure to a specific factor. Useful for finding stocks with high or low sensitivity to particular market factors.
+
+Query params: ?model=modelName (default: "All Factors")
+
+Response includes: ticker, name, exposure (beta), r_squared, adjusted_r_squared
+
+GET /api/screener/stocks
+Returns all stocks with their model fit quality metrics (R² and Adjusted R²), without filtering by factor exposure. Useful for finding stocks with high or low factor model fit, or for screening based purely on model quality.
+
+Query params: ?model=modelName (default: "All Factors")
+
+Response includes: ticker, name, stock_type, r_squared, adjusted_r_squared
+
+Hedge Portfolio Endpoints
+POST /api/hedge/calculate
+Calculates optimal hedge positions to achieve specified factor targets. Uses a greedy optimization algorithm to find the best combination of stocks and ETFs that moves portfolio exposures toward target values while respecting position size, liquidity, and sector constraints.
+
+Body:
+
+{
+  "portfolioExposures": { "Market Beta": 1.2, "Sector: Technology": 0.35, ... },
+  "portfolioTotal": 1000000,
+  "portfolioHoldings": ["AAPL", "MSFT", "GOOGL"],
+  "factorTargets": {
+    "Market Beta": { "current": 1.2, "target": 0 },
+    "Sector: Technology": { "current": 0.35, "target": 0 }
+  },
+  "settings": {
+    "universeType": "etf_stocks",  // "etf", "stocks", "etf_stocks", or "custom"
+    "customTickers": [],            // If universeType is "custom"
+    "sectorFilter": [],             // Empty for all sectors
+    "maxPositionSize": 0.02,        // Max 2% per stock position
+    "maxEtfPositionSize": 0.10,     // Max 10% per ETF position
+    "maxPositions": 200,
+    "minLiquidity": 250000000,      // Min $250M daily volume
+    "minR2": 0.5,                   // Min 50% R-squared
+    "maxSectorExposure": 0.5,       // Max 50% in any sector
+    "longOnly": false,
+    "alphaFilter": true             // Prioritize alpha-aligned positions
+  }
+}
+Response includes:
+
+hedgePositions - Array of recommended positions with ticker, shares, dollarValue, and factor contributions
+summary - Total hedge value, hedge efficiency, positions used
+exposureBefore / exposureAfter - Factor exposures before and after hedge
+Factor Models
+Stock loadings are calculated against four progressively more comprehensive factor models. Use the model query parameter to select which model to use:
+
+Base	Standard macro factors only (Market, Size, Value, Momentum, Quality, etc.)
+Base + Sector	Adds 11 GICS sector factors (Technology, Financial, Healthcare, etc.)
+Base + Sector + Industry	Adds ~35 industry factors (Semiconductors, Biotechnology, etc.)
+All Factors	Adds ~40 country factors + ~80 custom thematic factors (default)
+Model Quality Metrics
+Stock loading endpoints return R² and Adjusted R² to measure how well the factor model explains a stock's returns:
+
+r_squared	Proportion of variance explained by the model (0.0 to 1.0). Higher = better fit.
+adjusted_r_squared	R² adjusted for model complexity. Penalizes overfitting from too many factors.
+n_active_factors	Number of factors with non-zero exposure (used in Adjusted R² calculation).
+Interpretation: R² < 10% = poor fit, 10-30% = fair fit, > 30% = good fit. Stocks with low R² have more idiosyncratic (stock-specific) risk.
+
+Corporate Action Adjustments
+All intraday price calculations automatically adjust for corporate actions (dividends and stock splits) when today is the ex-date:
+
+Dividends	adjusted_prev_close = prev_close - dividend_amount
+Stock Splits	adjusted_prev_close = prev_close / split_ratio (e.g., for 5:1 split, divide by 5)
+Intraday Return	return = (live_price - adjusted_prev_close) / adjusted_prev_close
+This ensures intraday returns accurately reflect true price movements rather than being distorted by technical price changes from corporate actions. Adjustments are applied automatically in live price displays, portfolio P/L calculations, and return decomposition analyses.
+
+Z-Score Calculations
+Factor return endpoints include z-scores to indicate how extreme a return is relative to historical norms. Z-scores are calculated for each factor and time frame:
+
+Calculation	z = (value - mean) / stdDev
+Time Frames	1d (intraday), 3d, 5d, 10d, 21d, 63d, 126d, 252d
+Historical Basis	Rolling returns computed from full cumulative price series (base 100)
+Cache Duration	Statistics cached for 6 hours for performance
+Interpretation: |z| < 1 = normal, 1-2 = notable, |z| ≥ 2 = extreme. Useful for identifying unusual factor movements.
+
+Quick Start: Downloading Factor Data
+Follow these steps to download historical factor data:
+
+Step 1: Get the factor catalog to discover all available factors:
+
+curl "https://factorstoday.com/api/factors/catalog"
+Step 2: Download historical data for a specific factor:
+
+# Basic factors (no special characters)
+curl "https://factorstoday.com/api/factor-history/Market?days=365"
+curl "https://factorstoday.com/api/factor-history/SmallSize?days=365"
+curl "https://factorstoday.com/api/factor-history/Momentum?days=365"
+
+# Factors with special characters (URL-encode the factor ID)
+curl "https://factorstoday.com/api/factor-history/Sector%3A%20Technology?days=365"
+curl "https://factorstoday.com/api/factor-history/Industry%3A%20Semiconductors?days=365"
+curl "https://factorstoday.com/api/factor-history/Country%3A%20Japan?days=365"
+curl "https://factorstoday.com/api/factor-history/Custom%20Group%201?days=365"
+Python example:
+
+import requests
+import urllib.parse
+
+# Get all available factors
+catalog = requests.get("https://factorstoday.com/api/factors/catalog").json()
+
+# Download data for a factor with special characters
+factor_id = "Sector: Technology"
+encoded_id = urllib.parse.quote(factor_id)
+url = f"https://factorstoday.com/api/factor-history/{encoded_id}?days=365"
+data = requests.get(url).json()
+
+# data is a list of {"date": "2024-01-02", "close": 123.45}
+Authentication
+For the time being, the FactorsToday API is open and does not require an API key for access. We encourage developers to build and experiment freely with our datasets.
+
+Rate Limits
+To ensure stable performance for all users, the API is limited to 10 requests per second per IP address. Exceeding this limit will result in a 429 Too Many Requests response.
