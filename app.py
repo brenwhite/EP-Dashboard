@@ -2460,6 +2460,7 @@ def inject_css() -> None:
         .state-table { min-width: 980px; }
         .technical-table { min-width: 1120px; }
         .classification-table { min-width: 1320px; }
+        .allocation-layout-table { min-width: 980px; }
         .market-table thead th {
             background: rgb(195, 185, 176);
             color: rgb(0, 0, 0);
@@ -2481,6 +2482,22 @@ def inject_css() -> None:
         .market-table tbody tr:hover { background: rgb(195, 185, 176); }
         .name { min-width: 250px; text-align: left !important; }
         .num, .pe { text-align: center; white-space: nowrap; }
+        .allocation-layout-table th,
+        .allocation-layout-table td {
+            padding: 0.38rem 0.55rem !important;
+            font-size: 0.84rem !important;
+            line-height: 1.2;
+        }
+        .allocation-layout-table .name { min-width: 220px; }
+        .allocation-layout-table .allocation-class-row td {
+            padding-top: 0.62rem !important;
+            padding-bottom: 0.22rem !important;
+            font-weight: 700;
+        }
+        .allocation-layout-table .allocation-total-row td {
+            padding-top: 0.62rem !important;
+            font-weight: 700;
+        }
         .signal-col { width: 110px; text-align: center; }
         .master { min-width: 185px; }
         .signal {
@@ -2758,6 +2775,61 @@ def build_household_allocation_layout(df: pd.DataFrame) -> str:
     )
 
 
+def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
+    pie_order = ["Equity", "Debt", "Alternatives w/ Tax Benefits", "Real Assets", "Cash & Equivalents"]
+    pie_df = (
+        df.groupby("Asset Class", as_index=False)["Allocation ($)"]
+        .sum()
+        .rename(columns={"Asset Class": "Label"})
+    )
+    pie_df = pie_df[pie_df["Label"].isin(pie_order)].copy()
+    total = float(pie_df["Allocation ($)"].sum()) if not pie_df.empty else 0.0
+    if total > 0:
+        pie_df["Allocation (%)"] = pie_df["Allocation ($)"] / total
+    else:
+        pie_df["Allocation (%)"] = 0.0
+    pie_df["Label"] = pd.Categorical(pie_df["Label"], categories=pie_order, ordered=True)
+    pie_df = pie_df.sort_values("Label")
+    pie_df["Legend Label"] = pie_df.apply(lambda row: f"{row['Label']} ({row['Allocation (%)'] * 100:.1f}%)", axis=1)
+
+    color_scale = alt.Scale(
+        domain=pie_order,
+        range=["#2f3134", "#7a6c5d", "#a0662c", "#c89f5d", "#d8cabb"],
+    )
+
+    arc = (
+        alt.Chart(pie_df)
+        .mark_arc(outerRadius=145, innerRadius=35, stroke="rgb(210, 200, 191)", strokeWidth=1.5)
+        .encode(
+            theta=alt.Theta("Allocation ($):Q"),
+            color=alt.Color("Label:N", scale=color_scale, legend=alt.Legend(title=None, orient="right", labelLimit=260)),
+            tooltip=[
+                alt.Tooltip("Label:N", title="Asset Class"),
+                alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
+                alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
+            ],
+        )
+        .properties(height=320, background="rgb(210, 200, 191)")
+    )
+
+    labels = (
+        alt.Chart(pie_df)
+        .mark_text(radius=175, size=12, color="black")
+        .encode(
+            theta=alt.Theta("Allocation ($):Q"),
+            text="Legend Label:N",
+        )
+        .properties(height=320, background="rgb(210, 200, 191)")
+    )
+
+    return (
+        (arc + labels)
+        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_legend(labelColor="black", titleColor="black", symbolStrokeColor="black")
+        .properties(background="rgb(210, 200, 191)")
+    )
+
+
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
@@ -2801,6 +2873,7 @@ def render_portfolio_classification_dashboard(
         ).drop(columns="_class_order")
 
     if not allocation_summary.empty:
+        st.altair_chart(build_household_allocation_pie(allocation_summary), use_container_width=True)
         st.markdown(build_household_allocation_layout(allocation_summary), unsafe_allow_html=True)
 
     if not classified_df.empty:
