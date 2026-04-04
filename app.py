@@ -1388,10 +1388,11 @@ def classify_portfolio(
     columns = list(portfolio_df.columns)
     account_name_col = infer_column_name(columns, [["account name", "account", "portfolio name", "account title"]])
     account_type_col = infer_column_name(columns, [["account type", "type", "account category", "registration"]])
-    security_name_col = infer_column_name(columns, [["security name", "asset name", "long name", "name", "description"]])
+    security_name_col = infer_column_name(columns, [["security name", "asset name", "asset", "long name", "name", "description"]])
     ticker_col = infer_column_name(columns, [["ticker", "symbol", "ticker symbol"]])
     cusip_col = infer_column_name(columns, [["cusip", "cusip number"]])
     alt_id_col = infer_column_name(columns, [["alternative identifier", "alt id", "identifier", "security id", "isin", "sedol"]])
+    emv_col = infer_column_name(columns, [["emv", "ending market value", "market value", "value"]])
 
     working = portfolio_df.copy()
     working["account name"] = working[account_name_col] if account_name_col else ""
@@ -1405,6 +1406,21 @@ def classify_portfolio(
     working["ticker"] = working[ticker_col] if ticker_col else ""
     working["CUSIP"] = working[cusip_col] if cusip_col else ""
     working["alternative identifier"] = working[alt_id_col] if alt_id_col else ""
+    if emv_col:
+        working["EMV"] = (
+            working[emv_col]
+            .astype(str)
+            .str.replace(",", "", regex=False)
+            .str.replace("$", "", regex=False)
+        )
+        working["EMV"] = pd.to_numeric(working["EMV"], errors="coerce")
+    else:
+        working["EMV"] = np.nan
+    working = working[
+        working["security name"].notna()
+        & (working["security name"].astype(str).str.strip() != "")
+        & (working["EMV"].isna() | (working["EMV"] > 0))
+    ].copy()
 
     indexes = build_master_indexes(master_df)
     map_lookup, cw_lookup = build_assumption_mappers(map_df, cliffwater_df)
@@ -1413,10 +1429,19 @@ def classify_portfolio(
 
     for _, row in working.iterrows():
         security_name_norm = normalize_text_key(row.get("security name"))
+        raw_symbol_id = normalize_identifier(row.get("ticker"))
         lookup_sequence = [
             ("exact CUSIP", indexes["_norm_cusip"].get(normalize_identifier(row.get("CUSIP")), [])),
             ("exact alternative identifier", indexes["_norm_alt_id"].get(normalize_identifier(row.get("alternative identifier")), [])),
             ("exact ticker", indexes["_norm_ticker"].get(normalize_identifier(row.get("ticker")), [])),
+            (
+                "exact symbol identifier",
+                sorted(
+                    set(indexes["_norm_ticker"].get(raw_symbol_id, []))
+                    | set(indexes["_norm_cusip"].get(raw_symbol_id, []))
+                    | set(indexes["_norm_alt_id"].get(raw_symbol_id, []))
+                ),
+            ),
             (
                 "exact long name",
                 sorted(
@@ -1467,6 +1492,7 @@ def classify_portfolio(
             "match status": match_status,
             "internal class": None,
             "internal segment": None,
+            "EMV": row.get("EMV"),
         }
 
         if matched_master is not None:
@@ -2615,6 +2641,31 @@ def build_generic_table(title: str, df: pd.DataFrame, columns: list[str]) -> str
     )
 
 
+def build_allocation_table(title: str, df: pd.DataFrame, columns: list[str]) -> str:
+    rows: list[str] = []
+    display_df = df[columns].copy() if not df.empty else pd.DataFrame(columns=columns)
+    for _, row in display_df.iterrows():
+        cells = []
+        for col in columns:
+            value = row[col]
+            if col in {"EMV", "Household EMV"} and pd.notna(value):
+                text = f"${value:,.0f}"
+            elif "Allocation" in col and pd.notna(value):
+                text = f"{value * 100:.1f}%"
+            else:
+                text = "&mdash;" if pd.isna(value) or value == "" else escape(str(value))
+            klass = "name" if any(token in col.lower() for token in ["name", "class", "segment", "security"]) else "num"
+            cells.append(f"<td class='{klass}'>{text}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    body = "".join(rows) if rows else f"<tr><td colspan='{len(columns)}' class='num'>No records</td></tr>"
+    headers = "".join(f"<th>{escape(col)}</th>" for col in columns)
+    return (
+        f"<section class='group-block'><div class='group-header'>{escape(title)}</div>"
+        "<div class='table-scroll'><table class='market-table classification-table'>"
+        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div></section>"
+    )
+
+
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
@@ -2633,6 +2684,27 @@ def render_portfolio_classification_dashboard(
     matched = classified_df[classified_df["match status"] == "matched"].copy()
     unmatched = classified_df[classified_df["match status"] == "unmatched"].copy()
     ambiguous = classified_df[classified_df["match status"] == "ambiguous"].copy()
+    household_emv = float(matched["EMV"].fillna(0).sum()) if "EMV" in matched.columns else 0.0
+
+    allocation_summary = (
+        matched.groupby(["internal class", "internal segment"], dropna=False, as_index=False)["EMV"]
+        .sum()
+        .rename(columns={"internal class": "Class", "internal segment": "Segment"})
+    )
+    if not allocation_summary.empty and household_emv > 0:
+        allocation_summary["Allocation"] = allocation_summary["EMV"] / household_emv
+        allocation_summary["Household EMV"] = household_emv
+        allocation_summary = allocation_summary.sort_values(["Class", "EMV"], ascending=[True, False])
+
+    if not allocation_summary.empty:
+        st.markdown(
+            build_allocation_table(
+                "Household Asset Allocation",
+                allocation_summary,
+                ["Class", "Segment", "EMV", "Allocation"],
+            ),
+            unsafe_allow_html=True,
+        )
 
     if not classified_df.empty:
         for class_name, class_group in matched.groupby("internal class", dropna=False):
@@ -2641,37 +2713,35 @@ def render_portfolio_classification_dashboard(
                 for segment_name, segment_group in class_group.groupby("internal segment", dropna=False):
                     segment_label = "Unsegmented" if pd.isna(segment_name) else str(segment_name)
                     with st.expander(f"{segment_label} ({len(segment_group)})", expanded=False):
+                        segment_display = segment_group.copy()
+                        if household_emv > 0 and not segment_display.empty:
+                            segment_display["Allocation"] = segment_display["EMV"].fillna(0) / household_emv
+                        else:
+                            segment_display["Allocation"] = np.nan
                         st.markdown(
-                            build_generic_table(
+                            build_allocation_table(
                                 f"{class_label} > {segment_label}",
-                                segment_group,
+                                segment_display,
                                 [
-                                    "account name",
-                                    "account type",
                                     "security name",
                                     "ticker",
-                                    "CUSIP",
-                                    "alternative identifier",
-                                    "matched security from master file",
-                                    "match method",
-                                    "internal class",
-                                    "internal segment",
+                                    "EMV",
                                     "Cliffwater asset class",
-                                    "expected return",
-                                    "volatility",
+                                    "match method",
+                                    "Allocation",
                                 ],
                             ),
                             unsafe_allow_html=True,
                         )
 
     st.markdown(
-        build_generic_table(
+        build_allocation_table(
             "Matched Securities Review",
             matched,
             [
                 "security name",
                 "ticker",
-                "CUSIP",
+                "EMV",
                 "matched security from master file",
                 "match method",
                 "internal class",
@@ -2685,7 +2755,7 @@ def render_portfolio_classification_dashboard(
         build_generic_table(
             "Unmatched Securities Review",
             unmatched,
-            ["account name", "security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+            ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
         ),
         unsafe_allow_html=True,
     )
@@ -2693,7 +2763,7 @@ def render_portfolio_classification_dashboard(
         build_generic_table(
             "Ambiguous Securities Review",
             ambiguous,
-            ["account name", "security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+            ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
         ),
         unsafe_allow_html=True,
     )
