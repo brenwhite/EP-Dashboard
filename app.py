@@ -3271,7 +3271,7 @@ def main() -> None:
         """
         <div class="hero">
             <h1>Essential Partners Investment Overview</h1>
-            <p>A real-time look at what is happening today's markets.</p>
+            <p>A real-time look at what is happening in today's markets.</p>
         </div>
         """,
         unsafe_allow_html=True,
