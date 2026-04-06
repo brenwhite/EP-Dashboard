@@ -1891,7 +1891,7 @@ def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
         .properties(background="white")
@@ -1973,7 +1973,7 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
         .configure_legend(labelColor="black", titleColor="black")
@@ -2004,7 +2004,7 @@ def build_real_income_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
         .properties(background="white")
@@ -2115,7 +2115,7 @@ def build_earnings_vs_cpi_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
     )
@@ -2196,7 +2196,7 @@ def build_employment_vs_energy_chart(df: pd.DataFrame, recession_periods: pd.Dat
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
     )
@@ -2321,7 +2321,7 @@ def build_gdp_cpi_bar_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2.0,
             tickWidth=1.0,
         )
         .configure_legend(labelColor="black", titleColor="black")
