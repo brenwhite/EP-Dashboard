@@ -2583,6 +2583,30 @@ def inject_css() -> None:
             padding-top: 0.34rem !important;
             font-weight: 700;
         }
+        .compact-summary-table {
+            min-width: 100%;
+            width: 100%;
+            table-layout: fixed;
+        }
+        .compact-summary-table th,
+        .compact-summary-table td {
+            padding: 0.24rem 0.38rem !important;
+            font-size: 0.79rem !important;
+            line-height: 1.08;
+        }
+        .compact-summary-table th:nth-child(1),
+        .compact-summary-table td:nth-child(1) {
+            width: 64%;
+        }
+        .compact-summary-table th:nth-child(2),
+        .compact-summary-table td:nth-child(2) {
+            width: 36%;
+        }
+        .compact-summary-table .name {
+            min-width: 0;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
         .signal-col { width: 110px; text-align: center; }
         .master { min-width: 185px; }
         .signal {
@@ -2887,6 +2911,26 @@ def build_household_allocation_table_only(df: pd.DataFrame) -> str:
     )
 
 
+def build_compact_summary_table(title: str, df: pd.DataFrame, columns: list[str]) -> str:
+    rows: list[str] = []
+    display_df = df[columns].copy() if not df.empty else pd.DataFrame(columns=columns)
+    for _, row in display_df.iterrows():
+        cells = []
+        for col in columns:
+            value = row[col]
+            text = "&mdash;" if pd.isna(value) or value == "" else escape(str(value))
+            klass = "name" if col == columns[0] else "num"
+            cells.append(f"<td class='{klass}'>{text}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    body = "".join(rows) if rows else f"<tr><td colspan='{len(columns)}' class='num'>No records</td></tr>"
+    headers = "".join(f"<th>{escape(col)}</th>" for col in columns)
+    return (
+        f"<section class='group-block'><div class='group-header'>{escape(title)}</div>"
+        "<div class='table-scroll'><table class='market-table compact-summary-table'>"
+        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div></section>"
+    )
+
+
 def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
     pie_order = ["Equity", "Debt", "Alternatives w/ Tax Benefits", "Real Assets", "Cash & Equivalents"]
     pie_df = (
@@ -3148,28 +3192,35 @@ def render_portfolio_classification_dashboard(
             ),
             axis=1,
         )
-        st.markdown(
-            build_generic_table(
-                "Portfolio Metrics",
-                metrics_display,
-                ["Metric", "Value"],
-            ),
-            unsafe_allow_html=True,
-        )
+    else:
+        metrics_display = pd.DataFrame()
 
     if not risk_share_df.empty:
         risk_share_display = risk_share_df.copy()
-        risk_share_display["Allocation (%)"] = risk_share_display["Allocation (%)"].map(lambda x: f"{x * 100:.1f}%")
         risk_share_display["Risk Share"] = risk_share_display["Risk Share"].map(lambda x: f"{x * 100:.1f}%")
-        risk_share_display["Allocation ($)"] = risk_share_display["Allocation ($)"].map(lambda x: f"{x:,.0f}")
-        st.markdown(
-            build_generic_table(
-                "Risk Share by Asset Class",
-                risk_share_display,
-                ["Asset Class", "Allocation (%)", "Risk Share", "Allocation ($)"],
-            ),
-            unsafe_allow_html=True,
-        )
+    else:
+        risk_share_display = pd.DataFrame()
+
+    if not metrics_display.empty or not risk_share_display.empty:
+        metrics_col, risk_col = st.columns([1.0, 1.0], gap="large")
+        with metrics_col:
+            st.markdown(
+                build_compact_summary_table(
+                    "Portfolio Metrics",
+                    metrics_display,
+                    ["Metric", "Value"],
+                ),
+                unsafe_allow_html=True,
+            )
+        with risk_col:
+            st.markdown(
+                build_compact_summary_table(
+                    "Risk Share by Asset Class",
+                    risk_share_display,
+                    ["Asset Class", "Risk Share"],
+                ),
+                unsafe_allow_html=True,
+            )
 
     if not classified_df.empty:
         for class_name, class_group in matched.groupby("internal class", dropna=False):
