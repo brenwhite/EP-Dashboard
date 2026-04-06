@@ -3202,9 +3202,9 @@ def render_portfolio_classification_dashboard(
         with risk_col:
             st.markdown(
                 build_compact_summary_table(
-                    "Top 5 Risk Share Asset Class",
+                    "Top 5 Risk Share by Cliffwater Asset Class",
                     risk_share_display,
-                    ["Asset Class", "Risk Share"],
+                    ["Cliffwater Asset Class", "Risk Share"],
                 ),
                 unsafe_allow_html=True,
             )
