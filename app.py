@@ -2846,6 +2846,33 @@ def build_household_allocation_layout(df: pd.DataFrame) -> str:
     )
 
 
+def build_household_allocation_table_only(df: pd.DataFrame) -> str:
+    rows: list[str] = [
+        "<tr><th class='name'>Asset Class</th><th>Allocation (%)</th><th>Allocation ($)</th></tr>"
+    ]
+    total_emv = float(df["Allocation ($)"].sum()) if not df.empty else 0.0
+    for class_name, class_group in df.groupby("Asset Class", sort=False):
+        rows.append(f"<tr class='allocation-class-row'><td class='name'>{escape(str(class_name))}</td><td></td><td></td></tr>")
+        for _, row in class_group.iterrows():
+            rows.append(
+                "<tr>"
+                f"<td class='name'>{escape(str(row['Segment']))}</td>"
+                f"<td class='num'>{row['Allocation (%)'] * 100:.1f}%</td>"
+                f"<td class='num'>{row['Allocation ($)']:,.0f}</td>"
+                "</tr>"
+            )
+    rows.append(
+        "<tr class='allocation-total-row'>"
+        "<td class='name'>Total</td><td></td>"
+        f"<td class='num'>{total_emv:,.0f}</td>"
+        "</tr>"
+    )
+    return (
+        "<div class='table-scroll'><table class='market-table allocation-layout-table'>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
     pie_order = ["Equity", "Debt", "Alternatives w/ Tax Benefits", "Real Assets", "Cash & Equivalents"]
     pie_df = (
@@ -2898,10 +2925,144 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
     )
 
 
+def compute_portfolio_assumption_metrics(
+    classified_df: pd.DataFrame,
+    cliffwater_assumptions_df: pd.DataFrame,
+    cliffwater_correlation_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    matched = classified_df[classified_df["match status"] == "matched"].copy()
+    if matched.empty or "EMV" not in matched.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    matched["EMV"] = pd.to_numeric(matched["EMV"], errors="coerce")
+    matched["expected return"] = pd.to_numeric(matched["expected return"], errors="coerce")
+    matched["volatility"] = pd.to_numeric(matched["volatility"], errors="coerce")
+    matched = matched[matched["EMV"].fillna(0) > 0].copy()
+    household_total = float(matched["EMV"].sum())
+    if household_total <= 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    analytics = matched.dropna(subset=["Cliffwater asset class", "expected return", "volatility"]).copy()
+    if analytics.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    covered_total = float(analytics["EMV"].sum())
+    if covered_total <= 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    analytics["weight"] = analytics["EMV"] / covered_total
+    analytics["_norm_cw_asset_class"] = analytics["Cliffwater asset class"].map(normalize_text_key)
+
+    corr_df = cliffwater_correlation_df.copy()
+    first_col = corr_df.columns[0]
+    corr_df = corr_df.rename(columns={first_col: "CW Asset Class"})
+    corr_df["_norm_cw_asset_class"] = corr_df["CW Asset Class"].map(normalize_text_key)
+    normalized_cols = {
+        col: normalize_text_key(col)
+        for col in corr_df.columns
+        if col not in {"CW Asset Class", "_norm_cw_asset_class"}
+    }
+    corr_numeric = corr_df.rename(columns=normalized_cols).set_index("_norm_cw_asset_class")
+    corr_numeric = corr_numeric[[col for col in normalized_cols.values() if col in corr_numeric.columns]]
+    corr_numeric = corr_numeric.apply(pd.to_numeric, errors="coerce")
+
+    assumption_lookup = {
+        normalize_text_key(row["CW Asset Class"]): row
+        for _, row in cliffwater_assumptions_df.iterrows()
+        if pd.notna(row.get("CW Asset Class"))
+    }
+
+    cw_keys = analytics["_norm_cw_asset_class"].tolist()
+    sigma = analytics["volatility"].to_numpy(dtype=float)
+    mu = analytics["expected return"].to_numpy(dtype=float)
+    w = analytics["weight"].to_numpy(dtype=float)
+
+    corr_matrix = np.eye(len(analytics), dtype=float)
+    for i, key_i in enumerate(cw_keys):
+        for j, key_j in enumerate(cw_keys):
+            if i == j:
+                corr_matrix[i, j] = 1.0
+                continue
+            value = np.nan
+            if key_i in corr_numeric.index and key_j in corr_numeric.columns:
+                value = corr_numeric.at[key_i, key_j]
+            if pd.isna(value) and key_j in corr_numeric.index and key_i in corr_numeric.columns:
+                value = corr_numeric.at[key_j, key_i]
+            corr_matrix[i, j] = float(value) if pd.notna(value) else 0.0
+
+    covariance = corr_matrix * np.outer(sigma, sigma)
+    portfolio_variance = float(w @ covariance @ w)
+    portfolio_vol = math.sqrt(max(portfolio_variance, 0.0))
+    portfolio_return = float(w @ mu)
+
+    rf_row = assumption_lookup.get(normalize_text_key("3M SOFR (Cash)"))
+    risk_free = float(rf_row["R % avg"]) if rf_row is not None and pd.notna(rf_row.get("R % avg")) else 0.0
+    sharpe = ((portfolio_return - risk_free) / portfolio_vol) if portfolio_vol > 0 else np.nan
+
+    equity_ref_row = assumption_lookup.get(normalize_text_key("U.S. Stocks"))
+    equity_ref_vol = (
+        float(equity_ref_row["Vol"])
+        if equity_ref_row is not None and pd.notna(equity_ref_row.get("Vol"))
+        else np.nan
+    )
+    equity_key = normalize_text_key("U.S. Stocks")
+    beta_values: list[float] = []
+    for key_i, sigma_i in zip(cw_keys, sigma):
+        corr_to_equity = np.nan
+        if key_i in corr_numeric.index and equity_key in corr_numeric.columns:
+            corr_to_equity = corr_numeric.at[key_i, equity_key]
+        if pd.isna(corr_to_equity) and equity_key in corr_numeric.index and key_i in corr_numeric.columns:
+            corr_to_equity = corr_numeric.at[equity_key, key_i]
+        if pd.isna(corr_to_equity) or pd.isna(equity_ref_vol) or equity_ref_vol == 0:
+            beta_values.append(np.nan)
+        else:
+            beta_values.append(float(corr_to_equity) * float(sigma_i) / float(equity_ref_vol))
+    equity_beta = float(np.nansum(w * np.array(beta_values, dtype=float))) if beta_values else np.nan
+
+    marginal = covariance @ w
+    if portfolio_vol > 0:
+        component_risk = w * marginal / portfolio_vol
+        risk_share = component_risk / portfolio_vol
+    else:
+        component_risk = np.zeros(len(analytics))
+        risk_share = np.zeros(len(analytics))
+
+    analytics["Risk Share"] = risk_share
+    analytics["Component Risk"] = component_risk
+
+    risk_share_df = (
+        analytics.groupby("display class", dropna=False)
+        .agg(
+            **{
+                "Allocation ($)": ("EMV", "sum"),
+                "Weight": ("weight", "sum"),
+                "Risk Share": ("Risk Share", "sum"),
+            }
+        )
+        .reset_index()
+        .rename(columns={"display class": "Asset Class"})
+    )
+    risk_share_df["Allocation (%)"] = risk_share_df["Weight"]
+    risk_share_df = risk_share_df.sort_values("Allocation ($)", ascending=False)
+
+    metrics_df = pd.DataFrame(
+        [
+            {"Metric": "Expected Return", "Value": portfolio_return},
+            {"Metric": "Expected Volatility", "Value": portfolio_vol},
+            {"Metric": "Sharpe Ratio", "Value": sharpe},
+            {"Metric": "Equivalent Net Equity Beta", "Value": equity_beta},
+            {"Metric": "Assumption Coverage", "Value": covered_total / household_total},
+        ]
+    )
+    return metrics_df, risk_share_df
+
+
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
     source_label: str,
+    cliffwater_assumptions_df: pd.DataFrame,
+    cliffwater_correlation_df: pd.DataFrame,
 ) -> None:
     st.markdown(
         f"""
@@ -2940,9 +3101,61 @@ def render_portfolio_classification_dashboard(
             ascending=[True, True, False],
         ).drop(columns="_class_order")
 
+    portfolio_metrics_df, risk_share_df = compute_portfolio_assumption_metrics(
+        classified_df,
+        cliffwater_assumptions_df,
+        cliffwater_correlation_df,
+    )
+
     if not allocation_summary.empty:
-        st.altair_chart(build_household_allocation_pie(allocation_summary), use_container_width=True)
-        st.markdown(build_household_allocation_layout(allocation_summary), unsafe_allow_html=True)
+        st.markdown(
+            """
+            <section class="group-block">
+                <div class="group-header">Household Asset Allocation</div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+        pie_col, table_col = st.columns([1.0, 1.15], gap="large")
+        with pie_col:
+            st.altair_chart(build_household_allocation_pie(allocation_summary), use_container_width=True)
+        with table_col:
+            st.markdown(build_household_allocation_table_only(allocation_summary), unsafe_allow_html=True)
+
+    if not portfolio_metrics_df.empty:
+        metrics_display = portfolio_metrics_df.copy()
+        metrics_display["Value"] = metrics_display.apply(
+            lambda row: (
+                f"{row['Value'] * 100:.2f}%"
+                if row["Metric"] in {"Expected Return", "Expected Volatility", "Assumption Coverage"}
+                else f"{row['Value']:.2f}x"
+                if row["Metric"] == "Equivalent Net Equity Beta"
+                else f"{row['Value']:.2f}"
+            ),
+            axis=1,
+        )
+        st.markdown(
+            build_generic_table(
+                "Portfolio Metrics",
+                metrics_display,
+                ["Metric", "Value"],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    if not risk_share_df.empty:
+        risk_share_display = risk_share_df.copy()
+        risk_share_display["Allocation (%)"] = risk_share_display["Allocation (%)"].map(lambda x: f"{x * 100:.1f}%")
+        risk_share_display["Risk Share"] = risk_share_display["Risk Share"].map(lambda x: f"{x * 100:.1f}%")
+        risk_share_display["Allocation ($)"] = risk_share_display["Allocation ($)"].map(lambda x: f"{x:,.0f}")
+        st.markdown(
+            build_generic_table(
+                "Risk Share by Asset Class",
+                risk_share_display,
+                ["Asset Class", "Allocation (%)", "Risk Share", "Allocation ($)"],
+            ),
+            unsafe_allow_html=True,
+        )
 
     if not classified_df.empty:
         for class_name, class_group in matched.groupby("internal class", dropna=False):
@@ -3187,7 +3400,13 @@ def main() -> None:
                 | diagnostics_df["ticker"].fillna("").astype(str).str.lower().str.contains(query)
                 | diagnostics_df["CUSIP"].fillna("").astype(str).str.lower().str.contains(query)
             ]
-        render_portfolio_classification_dashboard(classified_df, diagnostics_df, source_label)
+        render_portfolio_classification_dashboard(
+            classified_df,
+            diagnostics_df,
+            source_label,
+            cliffwater_assumptions_df,
+            cliffwater_correlation_df,
+        )
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
