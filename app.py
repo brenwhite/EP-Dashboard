@@ -2946,39 +2946,28 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
         pie_df["Allocation (%)"] = 0.0
     pie_df["Label"] = pd.Categorical(pie_df["Label"], categories=pie_order, ordered=True)
     pie_df = pie_df.sort_values("Label")
-    pie_df["Legend Label"] = pie_df.apply(lambda row: f"{row['Label']} ({row['Allocation (%)'] * 100:.1f}%)", axis=1)
-    legend_order = pie_df["Legend Label"].tolist()
-
-    color_scale = alt.Scale(
-        domain=legend_order,
-        range=["#2f3134", "#7a6c5d", "#a0662c", "#c89f5d", "#d8cabb"],
-    )
 
     return (
         alt.Chart(pie_df)
-        .mark_arc(outerRadius=140, innerRadius=42, stroke="white", strokeWidth=1.5)
+        .mark_arc(
+            outerRadius=140,
+            innerRadius=42,
+            padAngle=0.05,
+            color="rgb(150, 140, 131)",
+            stroke="white",
+            strokeWidth=4,
+        )
         .encode(
-        theta=alt.Theta("Allocation ($):Q"),
-        color=alt.Color(
-            "Legend Label:N",
-            scale=color_scale,
-            legend=alt.Legend(
-                title=None,
-                orient="right",
-                labelLimit=400,
-                symbolSize=220,
-                labelFontSize=13,
-            ),
-        ),
-        tooltip=[
-            alt.Tooltip("Label:N", title="Asset Class"),
-            alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
-            alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
-        ],
-    )
+            theta=alt.Theta("Allocation ($):Q"),
+            order=alt.Order("Label:N", sort="ascending"),
+            tooltip=[
+                alt.Tooltip("Label:N", title="Asset Class"),
+                alt.Tooltip("Allocation (%):Q", title="Allocation", format=".1%"),
+                alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
+            ],
+        )
         .properties(height=340, width=720, background="white")
         .configure_view(stroke=None, fill="white")
-        .configure_legend(labelColor="black", titleColor="black", symbolStrokeColor="black")
         .properties(background="white")
     )
 
@@ -3213,9 +3202,9 @@ def render_portfolio_classification_dashboard(
         with risk_col:
             st.markdown(
                 build_compact_summary_table(
-                    "Top 5 Risk Share by Cliffwater Asset Class",
+                    "Top 5 Risk Share Asset Class",
                     risk_share_display,
-                    ["Cliffwater Asset Class", "Risk Share"],
+                    ["Asset Class", "Risk Share"],
                 ),
                 unsafe_allow_html=True,
             )
