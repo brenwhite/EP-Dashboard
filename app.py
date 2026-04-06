@@ -2415,7 +2415,7 @@ def inject_css() -> None:
             border-radius: 14px;
             padding: 1.25rem 1.5rem;
             margin-bottom: 1.25rem;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+            box-shadow: none;
         }
         .hero h1 { margin: 0; color: rgb(0, 0, 0); font-size: 2rem; font-weight: 700; letter-spacing: 0.01em; }
         .hero p { margin: 0.5rem 0 0 0; color: rgb(0, 0, 0); font-size: 0.98rem; }
@@ -2449,7 +2449,7 @@ def inject_css() -> None:
             border-radius: 14px;
             margin-bottom: 1rem;
             overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+            box-shadow: none;
         }
         .group-header {
             background: rgb(255, 255, 255);
@@ -2579,14 +2579,14 @@ def inject_css() -> None:
             border: 1px solid rgb(224, 224, 224);
             border-radius: 12px;
             padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+            box-shadow: none;
         }
         .macro-card {
             background: rgb(255, 255, 255);
             border: 1px solid rgb(224, 224, 224);
             border-radius: 12px;
             padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+            box-shadow: none;
         }
         .state-card .state-label {
             color: rgb(0, 0, 0);
