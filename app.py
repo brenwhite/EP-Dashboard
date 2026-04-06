@@ -3089,19 +3089,17 @@ def compute_portfolio_assumption_metrics(
     analytics["Component Risk"] = component_risk
 
     risk_share_df = (
-        analytics.groupby("display class", dropna=False)
+        analytics.groupby("Cliffwater asset class", dropna=False)
         .agg(
             **{
-                "Allocation ($)": ("EMV", "sum"),
-                "Weight": ("weight", "sum"),
                 "Risk Share": ("Risk Share", "sum"),
             }
         )
         .reset_index()
-        .rename(columns={"display class": "Asset Class"})
+        .rename(columns={"Cliffwater asset class": "Cliffwater Asset Class"})
+        .sort_values("Risk Share", ascending=False)
+        .head(5)
     )
-    risk_share_df["Allocation (%)"] = risk_share_df["Weight"]
-    risk_share_df = risk_share_df.sort_values("Allocation ($)", ascending=False)
 
     metrics_df = pd.DataFrame(
         [
@@ -3215,9 +3213,9 @@ def render_portfolio_classification_dashboard(
         with risk_col:
             st.markdown(
                 build_compact_summary_table(
-                    "Risk Share by Asset Class",
+                    "Top 5 Risk Share by Cliffwater Asset Class",
                     risk_share_display,
-                    ["Asset Class", "Risk Share"],
+                    ["Cliffwater Asset Class", "Risk Share"],
                 ),
                 unsafe_allow_html=True,
             )
