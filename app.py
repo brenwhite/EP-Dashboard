@@ -1973,7 +1973,7 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
             labelColor="black",
             tickColor="black",
             domainColor="black",
-            domainWidth=1.2,
+            domainWidth=2,
             tickWidth=1.0,
         )
         .configure_legend(labelColor="black", titleColor="black")
