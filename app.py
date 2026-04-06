@@ -2528,7 +2528,11 @@ def inject_css() -> None:
         .state-table { min-width: 980px; }
         .technical-table { min-width: 1120px; }
         .classification-table { min-width: 1320px; }
-        .allocation-layout-table { min-width: 980px; }
+        .allocation-layout-table {
+            min-width: 100%;
+            width: 100%;
+            table-layout: fixed;
+        }
         .market-table thead th {
             background: rgb(255, 255, 255);
             color: rgb(0, 0, 0);
@@ -2555,18 +2559,28 @@ def inject_css() -> None:
         .num, .pe { text-align: center; white-space: nowrap; }
         .allocation-layout-table th,
         .allocation-layout-table td {
-            padding: 0.3rem 0.48rem !important;
-            font-size: 0.84rem !important;
-            line-height: 1.12;
+            padding: 0.24rem 0.4rem !important;
+            font-size: 0.79rem !important;
+            line-height: 1.08;
         }
-        .allocation-layout-table .name { min-width: 220px; }
+        .allocation-layout-table th:nth-child(1),
+        .allocation-layout-table td:nth-child(1) { width: 50%; }
+        .allocation-layout-table th:nth-child(2),
+        .allocation-layout-table td:nth-child(2) { width: 22%; }
+        .allocation-layout-table th:nth-child(3),
+        .allocation-layout-table td:nth-child(3) { width: 28%; }
+        .allocation-layout-table .name {
+            min-width: 0;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
         .allocation-layout-table .allocation-class-row td {
-            padding-top: 0.48rem !important;
-            padding-bottom: 0.16rem !important;
+            padding-top: 0.34rem !important;
+            padding-bottom: 0.1rem !important;
             font-weight: 700;
         }
         .allocation-layout-table .allocation-total-row td {
-            padding-top: 0.48rem !important;
+            padding-top: 0.34rem !important;
             font-weight: 700;
         }
         .signal-col { width: 110px; text-align: center; }
@@ -3116,7 +3130,7 @@ def render_portfolio_classification_dashboard(
             """,
             unsafe_allow_html=True,
         )
-        pie_col, table_col = st.columns([1.0, 1.15], gap="large")
+        pie_col, table_col = st.columns([0.9, 1.25], gap="large")
         with pie_col:
             st.altair_chart(build_household_allocation_pie(allocation_summary), use_container_width=True)
         with table_col:
@@ -3271,7 +3285,7 @@ def main() -> None:
         """
         <div class="hero">
             <h1>Essential Partners Investment Overview</h1>
-            <p>A real-time look at what is happening in today's markets.</p>
+            <p>A real-time look at what is happening today's markets.</p>
         </div>
         """,
         unsafe_allow_html=True,
