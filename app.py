@@ -1931,7 +1931,11 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
                 domainColor="#d53d32",
                 grid=False,
             ),
-        )
+        ),
+        tooltip=[
+            alt.Tooltip("date:T", title="Date"),
+            alt.Tooltip("savings_yoy_change:Q", title="Savings Rate YoY Change", format=".2f"),
+        ],
     )
 
     line_data = chart_df.reset_index().rename(columns={"index": "date"}).melt(
@@ -1958,7 +1962,12 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
             axis=alt.Axis(title=None, format=".1f", labelColor="black", domainColor="black", tickColor="black", grid=False),
             scale=alt.Scale(zero=False),
         ),
-        color=alt.Color("series:N", scale=color_scale, legend=alt.Legend(title=None, orient="top")),
+        color=alt.Color("series:N", scale=color_scale, legend=None),
+        tooltip=[
+            alt.Tooltip("date:T", title="Date"),
+            alt.Tooltip("series:N", title="Series"),
+            alt.Tooltip("value:Q", title="Value", format=".2f"),
+        ],
     )
 
     return (
