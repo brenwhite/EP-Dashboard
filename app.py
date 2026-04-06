@@ -2301,12 +2301,12 @@ def build_gdp_cpi_bar_chart(df: pd.DataFrame) -> alt.Chart:
             color=alt.Color(
                 "Series:N",
                 scale=alt.Scale(domain=["Real GDP YoY", "Headline CPI YoY"], range=["#2f3134", "#e2833d"]),
-                legend=alt.Legend(title=None, orient="top"),
+                legend=None,
             ),
             opacity=alt.Opacity(
                 "Type:N",
                 scale=alt.Scale(domain=["Actual", "Estimate"], range=[1.0, 0.6]),
-                legend=alt.Legend(title=None, orient="top"),
+                legend=None,
             ),
             tooltip=["Quarter:N", "Type:N", "Series:N", alt.Tooltip("Value:Q", format=".2f")],
         )
