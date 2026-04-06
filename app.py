@@ -1883,10 +1883,10 @@ def build_nfp_chart(df: pd.DataFrame) -> alt.Chart:
             scale=alt.Scale(zero=False),
         )
     )
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
-        .properties(background="rgb(210, 200, 191)")
+        .properties(background="white")
     )
 
 
@@ -1956,8 +1956,8 @@ def build_income_vs_consumption_chart(df: pd.DataFrame) -> alt.Chart:
     return (
         alt.layer(lines, bars)
         .resolve_scale(y="independent")
-        .properties(height=330, title=title, background="rgb(210, 200, 191)")
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .properties(height=330, title=title, background="white")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
         .configure_legend(labelColor="black", titleColor="black")
@@ -1980,10 +1980,10 @@ def build_real_income_chart(df: pd.DataFrame) -> alt.Chart:
             scale=alt.Scale(zero=False),
         )
     )
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
-        .properties(background="rgb(210, 200, 191)")
+        .properties(background="white")
     )
 
 
@@ -2081,9 +2081,9 @@ def build_earnings_vs_cpi_chart(df: pd.DataFrame) -> alt.Chart:
                 anchor="start",
                 dy=-8,
             ),
-            background="rgb(210, 200, 191)",
+            background="white",
         )
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
     )
@@ -2154,9 +2154,9 @@ def build_employment_vs_energy_chart(df: pd.DataFrame, recession_periods: pd.Dat
                 anchor="start",
                 dy=-8,
             ),
-            background="rgb(210, 200, 191)",
+            background="white",
         )
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
     )
@@ -2271,9 +2271,9 @@ def build_gdp_cpi_bar_chart(df: pd.DataFrame) -> alt.Chart:
                 anchor="start",
                 dy=-8,
             ),
-            background="rgb(210, 200, 191)",
+            background="white",
         )
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .configure_view(stroke=None, fill="white")
         .configure_title(color="black")
         .configure_axis(labelFontSize=11, titleColor="black")
         .configure_legend(labelColor="black", titleColor="black")
@@ -2396,15 +2396,26 @@ def inject_css() -> None:
     st.markdown(
         """
         <style>
-        .stApp { background: rgb(0, 0, 0); }
+        .stApp { background: rgb(255, 255, 255); color: rgb(0, 0, 0); }
+        [data-testid="stAppViewContainer"] { background: rgb(255, 255, 255); }
+        section[data-testid="stSidebar"] {
+            background: rgb(255, 255, 255);
+            border-right: 1px solid rgb(224, 224, 224);
+        }
+        section[data-testid="stSidebar"] * {
+            color: rgb(0, 0, 0);
+        }
+        [data-testid="stHeader"] {
+            background: rgba(255, 255, 255, 0.96);
+        }
         .block-container { max-width: 1500px; padding-top: 1.5rem; padding-bottom: 2rem; }
         .hero {
-            background: rgb(210, 200, 191);
-            border: 1px solid rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
+            border: 1px solid rgb(224, 224, 224);
             border-radius: 14px;
             padding: 1.25rem 1.5rem;
             margin-bottom: 1.25rem;
-            box-shadow: 0 10px 30px rgba(150, 140, 131, 0.18);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
         }
         .hero h1 { margin: 0; color: rgb(0, 0, 0); font-size: 2rem; font-weight: 700; letter-spacing: 0.01em; }
         .hero p { margin: 0.5rem 0 0 0; color: rgb(0, 0, 0); font-size: 0.98rem; }
@@ -2415,8 +2426,8 @@ def inject_css() -> None:
             margin: 1rem 0 1.25rem 0;
         }
         .summary-card {
-            background: rgb(210, 200, 191);
-            border: 1px solid rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
+            border: 1px solid rgb(224, 224, 224);
             border-radius: 12px;
             padding: 0.95rem 1rem;
         }
@@ -2433,22 +2444,22 @@ def inject_css() -> None:
             margin-top: 0.2rem;
         }
         .group-block {
-            background: rgb(210, 200, 191);
-            border: 1px solid rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
+            border: 1px solid rgb(224, 224, 224);
             border-radius: 14px;
             margin-bottom: 1rem;
             overflow: hidden;
-            box-shadow: 0 8px 24px rgba(150, 140, 131, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
         }
         .group-header {
-            background: linear-gradient(90deg, rgb(150, 140, 131) 0%, rgb(180, 170, 161) 100%);
+            background: rgb(255, 255, 255);
             color: rgb(0, 0, 0);
             font-size: 0.95rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
             padding: 0.8rem 1rem;
-            border-bottom: 2px solid rgb(165, 155, 146);
+            border-bottom: 1px solid rgb(224, 224, 224);
         }
         .table-scroll {
             width: 100%;
@@ -2462,7 +2473,7 @@ def inject_css() -> None:
         .classification-table { min-width: 1320px; }
         .allocation-layout-table { min-width: 980px; }
         .market-table thead th {
-            background: rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
             color: rgb(0, 0, 0);
             font-size: 0.78rem;
             font-weight: 700;
@@ -2478,8 +2489,9 @@ def inject_css() -> None:
             font-size: 0.92rem;
             vertical-align: middle;
             text-align: center;
+            background: rgb(255, 255, 255);
         }
-        .market-table tbody tr:hover { background: rgb(195, 185, 176); }
+        .market-table tbody tr:hover td { background: rgb(248, 248, 248); }
         .name { min-width: 250px; text-align: left !important; }
         .num, .pe { text-align: center; white-space: nowrap; }
         .allocation-layout-table th,
@@ -2561,18 +2573,18 @@ def inject_css() -> None:
             margin-bottom: 1rem;
         }
         .state-card {
-            background: rgb(210, 200, 191);
-            border: 1px solid rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
+            border: 1px solid rgb(224, 224, 224);
             border-radius: 12px;
             padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(150, 140, 131, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
         }
         .macro-card {
-            background: rgb(210, 200, 191);
-            border: 1px solid rgb(195, 185, 176);
+            background: rgb(255, 255, 255);
+            border: 1px solid rgb(224, 224, 224);
             border-radius: 12px;
             padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(150, 140, 131, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
         }
         .state-card .state-label {
             color: rgb(0, 0, 0);
@@ -2800,7 +2812,7 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
 
     return (
         alt.Chart(pie_df)
-        .mark_arc(outerRadius=140, innerRadius=42, stroke="rgb(210, 200, 191)", strokeWidth=1.5)
+        .mark_arc(outerRadius=140, innerRadius=42, stroke="white", strokeWidth=1.5)
         .encode(
         theta=alt.Theta("Allocation ($):Q"),
         color=alt.Color(
@@ -2820,10 +2832,10 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
             alt.Tooltip("Allocation ($):Q", title="Allocation ($)", format=",.0f"),
         ],
     )
-        .properties(height=340, width=720, background="rgb(210, 200, 191)")
-        .configure_view(stroke=None, fill="rgb(210, 200, 191)")
+        .properties(height=340, width=720, background="white")
+        .configure_view(stroke=None, fill="white")
         .configure_legend(labelColor="black", titleColor="black", symbolStrokeColor="black")
-        .properties(background="rgb(210, 200, 191)")
+        .properties(background="white")
     )
 
 
