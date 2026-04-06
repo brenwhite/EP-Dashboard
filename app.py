@@ -2454,11 +2454,11 @@ def inject_css() -> None:
         .group-header {
             background: rgb(255, 255, 255);
             color: rgb(0, 0, 0);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            padding: 0.8rem 1rem;
+            padding: 0.62rem 0.85rem;
             border-bottom: 1px solid rgb(224, 224, 224);
         }
         .table-scroll {
@@ -2475,39 +2475,41 @@ def inject_css() -> None:
         .market-table thead th {
             background: rgb(255, 255, 255);
             color: rgb(0, 0, 0);
-            font-size: 0.78rem;
+            font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.06em;
             text-transform: uppercase;
-            padding: 0.8rem 0.85rem;
+            padding: 0.5rem 0.58rem;
             text-align: center;
             white-space: nowrap;
+            line-height: 1.1;
         }
         .market-table tbody td {
-            padding: 0.8rem 0.85rem;
+            padding: 0.42rem 0.58rem;
             color: rgb(0, 0, 0);
-            font-size: 0.92rem;
+            font-size: 0.86rem;
             vertical-align: middle;
             text-align: center;
             background: rgb(255, 255, 255);
+            line-height: 1.15;
         }
         .market-table tbody tr:hover td { background: rgb(248, 248, 248); }
-        .name { min-width: 250px; text-align: left !important; }
+        .name { min-width: 220px; text-align: left !important; }
         .num, .pe { text-align: center; white-space: nowrap; }
         .allocation-layout-table th,
         .allocation-layout-table td {
-            padding: 0.38rem 0.55rem !important;
+            padding: 0.3rem 0.48rem !important;
             font-size: 0.84rem !important;
-            line-height: 1.2;
+            line-height: 1.12;
         }
         .allocation-layout-table .name { min-width: 220px; }
         .allocation-layout-table .allocation-class-row td {
-            padding-top: 0.62rem !important;
-            padding-bottom: 0.22rem !important;
+            padding-top: 0.48rem !important;
+            padding-bottom: 0.16rem !important;
             font-weight: 700;
         }
         .allocation-layout-table .allocation-total-row td {
-            padding-top: 0.62rem !important;
+            padding-top: 0.48rem !important;
             font-weight: 700;
         }
         .signal-col { width: 110px; text-align: center; }
