@@ -23,6 +23,7 @@ st.set_page_config(page_title="Institutional Market Overview", page_icon=":bar_c
 CSV_FILENAME = "data.csv"
 FULL_UNIVERSE_SCHEMA_FILENAME = "full_universe_schema.csv"
 MACRO_QUARTERLY_SNAPSHOT_FILENAME = "macro_quarterly_snapshot.csv"
+PORTFOLIO_TICKERS_FILENAME = "portfolio_tickers.csv"
 ASSET_CLASSIFICATION_FILENAME = "asset_classification.csv"
 CAPITAL_MARKET_MAP_FILENAME = "Capital_market_assumptions_Map.csv"
 CLIFFWATER_FILENAME = "cliffwater.csv"
@@ -405,6 +406,12 @@ def format_percent_from_decimal(value: float | None, decimals: int = 1) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
+def format_percent_from_decimal_dash(value: float | None, decimals: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    return f"{value * 100:.{decimals}f}%"
+
+
 def format_pe_value(value: float | None) -> str:
     if value is None or pd.isna(value):
         return "&mdash;"
@@ -754,7 +761,7 @@ def fetch_factor_history_frame(factor_id: str, days: int = 2000) -> pd.DataFrame
 def fetch_factorstoday_stock_returns(tickers: tuple[str, ...]) -> pd.DataFrame:
     rows: list[dict[str, float | str | None]] = []
     if not tickers:
-        return pd.DataFrame(columns=["Ticker", "YTD_Return", "Return_1Y", "Return_3Y", "Return_5Y"])
+        return pd.DataFrame(columns=["Ticker", "YTD_Return", "Return_1Y", "Return_3Y", "Return_5Y", "Below 52W High %"])
 
     today = pd.Timestamp.today().normalize()
     anchors = {
@@ -769,6 +776,14 @@ def fetch_factorstoday_stock_returns(tickers: tuple[str, ...]) -> pd.DataFrame:
         row: dict[str, float | str | None] = {"Ticker": ticker}
         for field, anchor in anchors.items():
             row[field] = calculate_period_return_from_history(history, anchor)
+        closes = history["close"].dropna() if not history.empty else pd.Series(dtype=float)
+        if closes.empty:
+            row["Below 52W High %"] = None
+        else:
+            trailing_window = closes.iloc[-252:] if len(closes) >= 252 else closes
+            high_52w = trailing_window.max()
+            last_close = closes.iloc[-1]
+            row["Below 52W High %"] = None if pd.isna(high_52w) or high_52w == 0 else float((last_close - high_52w) / high_52w)
         rows.append(row)
         if idx < len(tickers) - 1:
             time.sleep(0.11)
@@ -1196,6 +1211,22 @@ def load_full_universe_schema(csv_name: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Full universe schema missing columns: {sorted(missing)}")
     return df.rename(columns={"Full_Universe_Group": FULL_UNIVERSE_GROUP_COL})
+
+
+@st.cache_data(show_spinner=False)
+def load_portfolio_tickers(csv_name: str) -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parent / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Missing portfolio ticker file: {csv_path}")
+    df = pd.read_csv(csv_path)
+    required = {"Group", "Ticker", "Sort_Order"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Portfolio ticker file missing columns: {sorted(missing)}")
+    df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
+    df["Group"] = df["Group"].astype(str).str.strip()
+    df["Sort_Order"] = pd.to_numeric(df["Sort_Order"], errors="coerce").fillna(np.arange(len(df)))
+    return df
 
 
 @st.cache_data(show_spinner=False)
@@ -2449,6 +2480,30 @@ def build_universe_table(group_name: str, group_df: pd.DataFrame) -> str:
     )
 
 
+def build_portfolio_ticker_table(group_name: str, group_df: pd.DataFrame) -> str:
+    rows: list[str] = []
+    for _, row in group_df.iterrows():
+        rows.append(
+            "<tr>"
+            f"<td class='name'>{escape(str(row['Ticker']))}</td>"
+            f"<td class='num'>{row['YTD_Display']}</td>"
+            f"<td class='num'>{row['Return_1Y_Display']}</td>"
+            f"<td class='num'>{row['Return_3Y_Display']}</td>"
+            f"<td class='num'>{row['Return_5Y_Display']}</td>"
+            f"<td class='num'>{row['Below52_Display']}</td>"
+            "</tr>"
+        )
+    return (
+        f"<section class='group-block'><div class='group-header'>{escape(group_name)}</div>"
+        "<div class='table-scroll'><table class='market-table universe-table'>"
+        "<thead><tr>"
+        "<th>Ticker</th><th>Total Return (YTD)</th><th>Total Return (1Y)</th><th>Total Return (3Y)</th>"
+        "<th>Total Return (5Y)</th><th>Below 52W High %</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+    )
+
+
 def inject_css() -> None:
     st.markdown(
         """
@@ -2783,6 +2838,18 @@ def render_universe_dashboard(universe_df: pd.DataFrame, selected_classes: list[
         group = filtered[filtered[FULL_UNIVERSE_GROUP_COL] == group_name]
         if not group.empty:
             st.markdown(build_universe_table(group_name, group), unsafe_allow_html=True)
+
+
+def render_portfolio_ticker_dashboard(portfolio_df: pd.DataFrame, ticker_query: str) -> None:
+    filtered = portfolio_df.copy()
+    if ticker_query:
+        query = ticker_query.lower()
+        filtered = filtered[filtered["Ticker"].str.lower().str.contains(query, na=False)]
+    if filtered.empty:
+        st.info("No portfolio tickers match the current filters.")
+        return
+    for group_name, group in filtered.groupby("Group", sort=False):
+        st.markdown(build_portfolio_ticker_table(group_name, group), unsafe_allow_html=True)
 
 
 def render_technical_dashboard(technical_df: pd.DataFrame, query_text: str) -> None:
@@ -3332,6 +3399,7 @@ def main() -> None:
     raw_df = load_market_data(CSV_FILENAME)
     template_df = load_curated_template()
     full_universe_schema_df = load_full_universe_schema(FULL_UNIVERSE_SCHEMA_FILENAME)
+    portfolio_tickers_df = load_portfolio_tickers(PORTFOLIO_TICKERS_FILENAME)
     asset_master_df = load_asset_classification_master(ASSET_CLASSIFICATION_FILENAME)
     capital_map_df = load_capital_market_map(CAPITAL_MARKET_MAP_FILENAME)
     cliffwater_assumptions_df, cliffwater_correlation_df = load_cliffwater_assumptions(CLIFFWATER_FILENAME)
@@ -3365,7 +3433,7 @@ def main() -> None:
         st.header("Dashboard")
         dashboard_mode = st.radio(
             "View",
-            ["Curated Overview", "Full Universe", "Portfolio Classification", "Technical Overview", "State of the Market", "Macro Dashboard"],
+            ["Curated Overview", "Full Universe", "Portfolio Ticker Returns", "Portfolio Classification", "Technical Overview", "State of the Market", "Macro Dashboard"],
             index=0,
         )
         if dashboard_mode == "State of the Market":
@@ -3374,6 +3442,9 @@ def main() -> None:
         elif dashboard_mode == "Portfolio Classification":
             search_label = "Search Holding"
             search_placeholder = "Ticker, CUSIP, or security name..."
+        elif dashboard_mode == "Portfolio Ticker Returns":
+            search_label = "Search Portfolio Ticker"
+            search_placeholder = "GMOV, SCHF, PHYS..."
         elif dashboard_mode == "Technical Overview":
             search_label = "Search Entity"
             search_placeholder = "SPY, Gold Price, Value..."
@@ -3428,6 +3499,15 @@ def main() -> None:
     elif dashboard_mode == "Technical Overview":
         technical_df = build_technical_overview_data(template_df)
         render_technical_dashboard(technical_df, query_text)
+    elif dashboard_mode == "Portfolio Ticker Returns":
+        portfolio_returns_df = fetch_factorstoday_stock_returns(tuple(portfolio_tickers_df["Ticker"].dropna().unique().tolist()))
+        portfolio_dashboard_df = portfolio_tickers_df.merge(portfolio_returns_df, on="Ticker", how="left").sort_values(["Sort_Order", "Ticker"])
+        portfolio_dashboard_df["YTD_Display"] = portfolio_dashboard_df["YTD_Return"].apply(format_percent_from_decimal_dash)
+        portfolio_dashboard_df["Return_1Y_Display"] = portfolio_dashboard_df["Return_1Y"].apply(format_percent_from_decimal_dash)
+        portfolio_dashboard_df["Return_3Y_Display"] = portfolio_dashboard_df["Return_3Y"].apply(format_percent_from_decimal_dash)
+        portfolio_dashboard_df["Return_5Y_Display"] = portfolio_dashboard_df["Return_5Y"].apply(format_percent_from_decimal_dash)
+        portfolio_dashboard_df["Below52_Display"] = portfolio_dashboard_df["Below 52W High %"].apply(format_percent_from_decimal_dash)
+        render_portfolio_ticker_dashboard(portfolio_dashboard_df, query_text)
     elif dashboard_mode == "Portfolio Classification":
         portfolio_input_df, source_label = parse_portfolio_input(portfolio_upload, pasted_portfolio_text)
         if portfolio_input_df is None:
