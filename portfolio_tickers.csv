@@ -1,0 +1,33 @@
+Group,Ticker,Sort_Order
+US Large Cap,GMOV,1
+US Large Cap,FNDB,2
+US SMID Cap,SCHA,3
+US SMID Cap,VBR,4
+International Dev. Active,DFJ,5
+International Dev. Active,FLJP,6
+International Dev. Active,DXJ,7
+International Dev. Passive,SCHF,8
+International Dev. Passive,FNDF,9
+International Dev. Passive,VSS,10
+EM Passive,IEMG,11
+EM Passive,EMXC,12
+USTs,SCHR,13
+USTs,SPTL,14
+USTs,VGSH,15
+USTs,TIPS,16
+USTs,LTPZ,17
+USTs,SCHP,18
+USTs,VTIP,19
+Diversified Debt Funds,DFLFX,20
+Diversified Debt Funds,GTPIX,21
+Diversified Debt Funds,ABLFX,22
+Diversified Debt Funds,RCTIX,23
+Diversified Debt Funds,ODIDX,24
+Gold,PHYS,25
+Commodities,COMT,26
+Commodities,CMDY,27
+Commodities,XLE,28
+Commodities,COM,29
+Long/Short Quantitative,DBMF,30
+Long/Short Quantitative,QGMIX,31
+Long/Short Quantitative,AHLT,32
