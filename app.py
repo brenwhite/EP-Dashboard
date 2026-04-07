@@ -1225,7 +1225,9 @@ def load_portfolio_tickers(csv_name: str) -> pd.DataFrame:
         raise ValueError(f"Portfolio ticker file missing columns: {sorted(missing)}")
     df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
     df["Group"] = df["Group"].astype(str).str.strip()
-    df["Sort_Order"] = pd.to_numeric(df["Sort_Order"], errors="coerce").fillna(np.arange(len(df)))
+    sort_order = pd.to_numeric(df["Sort_Order"], errors="coerce")
+    fallback_order = pd.Series(np.arange(len(df)), index=df.index, dtype=float)
+    df["Sort_Order"] = sort_order.where(sort_order.notna(), fallback_order)
     return df
 
 
