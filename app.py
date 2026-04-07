@@ -727,7 +727,10 @@ def calculate_period_return_from_history(history: pd.DataFrame, anchor_date: pd.
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_stock_history_frame(ticker: str, days: int = 2000) -> pd.DataFrame:
-    payload = factor_api_get_json(f"/api/stock-history/{quote(ticker)}?days={days}", timeout=30)
+    try:
+        payload = factor_api_get_json(f"/api/stock-history/{quote(ticker)}?days={days}", timeout=30)
+    except Exception:
+        return pd.DataFrame(columns=["close"])
     records = payload.get("data", payload) if isinstance(payload, dict) else payload
     if not isinstance(records, list) or not records:
         return pd.DataFrame(columns=["close"])
@@ -1715,7 +1718,7 @@ def build_universe_frame(df: pd.DataFrame, schema_df: pd.DataFrame) -> pd.DataFr
 
 def build_curated_frame(scored_df: pd.DataFrame, enrichment_df: pd.DataFrame, template_df: pd.DataFrame) -> pd.DataFrame:
     merged = template_df.merge(scored_df, on="Ticker", how="left", suffixes=("", "_csv"))
-    merged = merged.merge(enrichment_df, on="Ticker", how="left")
+    merged = merged.merge(enrichment_df, on="Ticker", how="left", suffixes=("", "_api"))
 
     merged["Name_Final"] = merged["Display_Name"].combine_first(merged["Name"])
     merged["Yield_Final"] = merged.apply(lambda row: first_valid(row["Yield"], row["Template_Yield"]), axis=1)
@@ -1723,7 +1726,14 @@ def build_curated_frame(scored_df: pd.DataFrame, enrichment_df: pd.DataFrame, te
     merged["Return_1Y_Final"] = merged["Return_1Y"]
     merged["Return_3Y_Final"] = merged["Return_3Y"]
     merged["Return_5Y_Final"] = merged["Return_5Y"]
-    merged["Below52_Final"] = merged.apply(lambda row: first_valid(row["Below 52W High %"], row["Template_Below52"]), axis=1)
+    merged["Below52_Final"] = merged.apply(
+        lambda row: first_valid(
+            row.get("Below 52W High %_api"),
+            row.get("Below 52W High %"),
+            row["Template_Below52"],
+        ),
+        axis=1,
+    )
     merged["PE_Trailing_Final"] = merged.apply(lambda row: first_valid(row["PE_Trailing"], row["Template_PE_Trailing"]), axis=1)
     merged["PE_Forward_Final"] = merged.apply(lambda row: first_valid(row["PE_Forward"], row["Template_PE_Forward"]), axis=1)
 
