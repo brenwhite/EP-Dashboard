@@ -1383,6 +1383,8 @@ def transform_performance_upload(df: pd.DataFrame) -> pd.DataFrame:
     out["NOF Return"] = parse_uploaded_return_series(out["NOF Return"])
     out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
     out["Cost Basis"] = out["Net Additions"].fillna(0).cumsum()
+    out["BMV"] = out["EMV"].shift(1)
+    out["Calculated NOF Return"] = calculate_cash_flow_adjusted_returns(out)
     return out
 
 
@@ -1403,12 +1405,40 @@ def transform_allocation_upload(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
+def calculate_cash_flow_adjusted_returns(df: pd.DataFrame) -> pd.Series:
     if df.empty:
-        return pd.DataFrame(columns=["Period", "NOF Return"])
-    series_df = df[["Date", "NOF Return"]].dropna().sort_values("Date").reset_index(drop=True)
+        return pd.Series(dtype=float)
+
+    emv = pd.to_numeric(df["EMV"], errors="coerce")
+    bmv = pd.to_numeric(df["BMV"], errors="coerce")
+    net_additions = pd.to_numeric(df["Net Additions"], errors="coerce").fillna(0.0)
+
+    numerator = emv - bmv - net_additions
+    positive_flows = net_additions > 0
+
+    denominator = pd.Series(np.nan, index=df.index, dtype=float)
+    denominator.loc[positive_flows] = bmv.loc[positive_flows] + net_additions.loc[positive_flows]
+    denominator.loc[~positive_flows] = bmv.loc[~positive_flows]
+
+    calculated = numerator / denominator
+    invalid_mask = bmv.isna() | denominator.isna() | np.isclose(denominator, 0.0)
+    calculated.loc[invalid_mask] = np.nan
+
+    if "NOF Return" in df.columns:
+        fallback_returns = pd.to_numeric(df["NOF Return"], errors="coerce")
+        calculated = calculated.where(calculated.notna(), fallback_returns)
+
+    return calculated
+
+
+def summarize_performance_returns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["Period", "Performance (Net of Fees)"])
+
+    return_col = "Calculated NOF Return" if "Calculated NOF Return" in df.columns else "NOF Return"
+    series_df = df[["Date", return_col]].dropna().sort_values("Date").reset_index(drop=True)
     if series_df.empty:
-        return pd.DataFrame(columns=["Period", "NOF Return"])
+        return pd.DataFrame(columns=["Period", "Performance (Net of Fees)"])
 
     latest_date = series_df["Date"].max()
     anchors = {
@@ -1419,9 +1449,9 @@ def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
 
     rows: list[dict[str, object]] = []
     for label, anchor in anchors.items():
-        period_returns = series_df.loc[series_df["Date"] >= anchor, "NOF Return"].dropna()
+        period_returns = series_df.loc[series_df["Date"] >= anchor, return_col].dropna()
         value = float((1.0 + period_returns).prod() - 1.0) if not period_returns.empty else np.nan
-        rows.append({"Period": label, "NOF Return": value})
+        rows.append({"Period": label, "Performance (Net of Fees)": value})
     return pd.DataFrame(rows)
 
 
@@ -3225,9 +3255,11 @@ def build_performance_chart(df: pd.DataFrame) -> alt.Chart:
 
 
 def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
-    summary_df = summarize_linked_returns(performance_df)
+    summary_df = summarize_performance_returns(performance_df)
     summary_display = summary_df.copy()
-    summary_display["NOF Return"] = summary_display["NOF Return"].apply(format_percent_from_decimal_dash)
+    summary_display["Performance (Net of Fees)"] = summary_display["Performance (Net of Fees)"].apply(
+        format_percent_from_decimal_dash
+    )
 
     st.markdown(
         """
@@ -3245,7 +3277,7 @@ def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
             build_compact_summary_table(
                 "Performance (Net of Fees)",
                 summary_display,
-                ["Period", "NOF Return"],
+                ["Period", "Performance (Net of Fees)"],
             ),
             unsafe_allow_html=True,
         )
