@@ -3704,13 +3704,11 @@ def main() -> None:
         if dashboard_mode == "Portfolio Classification":
             portfolio_upload = st.file_uploader("Upload Portfolio", type=["csv", "xlsx", "xls"])
             pasted_portfolio_text = st.text_area("Or Paste Portfolio CSV", height=120)
-            performance_upload = st.file_uploader("Performance_Data", type=["csv"], key="performance_upload")
-            allocation_upload = st.file_uploader("Asset_Allocation_Data", type=["csv"], key="allocation_upload")
+            performance_upload = st.file_uploader("Upload Performance Data", type=["csv"], key="performance_upload")
         else:
             portfolio_upload = None
             pasted_portfolio_text = ""
             performance_upload = None
-            allocation_upload = None
         if dashboard_mode == "Curated Overview":
             selected_curated_classes = st.multiselect("Asset Class", options=curated_classes, default=curated_classes)
             selected_universe_classes = universe_classes
@@ -3773,13 +3771,7 @@ def main() -> None:
             PERFORMANCE_REQUIRED_HEADERS,
             "Performance_Data",
         )
-        allocation_uploaded_df, allocation_error = read_validated_csv(
-            allocation_upload,
-            ALLOCATION_REQUIRED_HEADERS,
-            "Asset_Allocation_Data",
-        )
         transformed_performance_df = transform_performance_upload(performance_uploaded_df) if performance_uploaded_df is not None else None
-        transformed_allocation_df = transform_allocation_upload(allocation_uploaded_df) if allocation_uploaded_df is not None else None
 
         classified_df, diagnostics_df = classify_portfolio(
             portfolio_input_df,
@@ -3804,11 +3796,9 @@ def main() -> None:
             diagnostics_df,
             cliffwater_assumptions_df,
             cliffwater_correlation_df,
-            transformed_allocation_df,
+            None,
             transformed_performance_df,
         )
-        if allocation_error:
-            st.warning(allocation_error)
         if performance_error:
             st.warning(performance_error)
     elif dashboard_mode == "State of the Market":
