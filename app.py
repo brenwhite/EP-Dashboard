@@ -13,6 +13,7 @@ from urllib.parse import quote
 import altair as alt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
@@ -215,6 +216,9 @@ DISPLAY_SEGMENT_MAP = {
     ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Tax-Aware Hedge Funds",
 }
 
+PERFORMANCE_REQUIRED_HEADERS = ["Date", "EMV", "Net Additions", "NOF Linked Return"]
+ALLOCATION_REQUIRED_HEADERS = ["Asset Class", "Current Value", "Target %"]
+
 FULL_UNIVERSE_PE_CLASSES = {
     "Greater China Equity",
     "Europe Equity Large Cap",
@@ -326,6 +330,27 @@ def normalize_yield_series(series: pd.Series) -> pd.Series:
     if pd.notna(med) and med <= 1:
         return series * 100.0
     return series
+
+
+def parse_uploaded_numeric_series(series: pd.Series) -> pd.Series:
+    cleaned = (
+        series.astype(str)
+        .str.strip()
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.replace("%", "", regex=False)
+        .str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+    )
+    cleaned = cleaned.replace({"": np.nan, "nan": np.nan, "None": np.nan})
+    return pd.to_numeric(cleaned, errors="coerce")
+
+
+def parse_uploaded_return_series(series: pd.Series) -> pd.Series:
+    original = series.astype(str)
+    numeric = parse_uploaded_numeric_series(series)
+    if original.str.contains("%", regex=False, na=False).any():
+        return numeric / 100.0
+    return safe_pct_series(numeric)
 
 
 def flow_percentile_scores(df: pd.DataFrame, flow_col: str, tickers: list[str]) -> pd.Series:
@@ -1332,6 +1357,68 @@ def parse_portfolio_input(uploaded_file, pasted_text: str) -> tuple[pd.DataFrame
     if pasted_text.strip():
         return pd.read_csv(StringIO(pasted_text.strip())), "Pasted CSV"
     return None, "Master file self-check"
+
+
+def read_validated_csv(uploaded_file, required_headers: list[str], label: str) -> tuple[pd.DataFrame | None, str | None]:
+    if uploaded_file is None:
+        return None, None
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as exc:
+        return None, f"{label} could not be read: {exc}"
+    if df.empty:
+        return None, f"{label} is empty."
+    normalized = {col: str(col).strip() for col in df.columns}
+    df = df.rename(columns=normalized)
+    missing = [header for header in required_headers if header not in df.columns]
+    if missing:
+        return None, f"{label} is missing required headers: {', '.join(missing)}"
+    return df, None
+
+
+def transform_performance_upload(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out["EMV"] = parse_uploaded_numeric_series(out["EMV"])
+    out["Net Additions"] = parse_uploaded_numeric_series(out["Net Additions"])
+    out["NOF Linked Return"] = parse_uploaded_return_series(out["NOF Linked Return"])
+    out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    out["Cost Basis"] = out["Net Additions"].fillna(0).cumsum()
+    return out
+
+
+def transform_allocation_upload(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["Asset Class"] = out["Asset Class"].astype(str).str.strip()
+    out["Current Value"] = parse_uploaded_numeric_series(out["Current Value"])
+    out["Target %"] = safe_pct_series(parse_uploaded_numeric_series(out["Target %"]))
+    out = out[out["Asset Class"].ne("") & out["Current Value"].notna()].copy()
+    grouped = (
+        out.groupby("Asset Class", as_index=False)
+        .agg({"Current Value": "sum", "Target %": "sum"})
+        .sort_values("Current Value", ascending=False)
+    )
+    total_value = float(grouped["Current Value"].sum()) if not grouped.empty else 0.0
+    grouped["Allocation (%)"] = grouped["Current Value"] / total_value if total_value > 0 else 0.0
+    grouped = grouped.rename(columns={"Current Value": "Allocation ($)"})
+    return grouped
+
+
+def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["Period", "NOF Linked Return"])
+    latest_date = df["Date"].max()
+    anchors = {
+        "YTD": pd.Timestamp(year=latest_date.year, month=1, day=1),
+        "1Y": latest_date - pd.DateOffset(years=1),
+        "ITD": df["Date"].min(),
+    }
+    rows: list[dict[str, object]] = []
+    for label, anchor in anchors.items():
+        period_returns = df.loc[df["Date"] >= anchor, "NOF Linked Return"].dropna()
+        value = float((1.0 + period_returns).prod() - 1.0) if not period_returns.empty else np.nan
+        rows.append({"Period": label, "NOF Linked Return": value})
+    return pd.DataFrame(rows)
 
 
 def build_master_indexes(master_df: pd.DataFrame) -> dict[str, dict[str, list[int]]]:
@@ -3017,13 +3104,14 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
         .sum()
         .rename(columns={"Asset Class": "Label"})
     )
-    pie_df = pie_df[pie_df["Label"].isin(pie_order)].copy()
+    labels = pie_df["Label"].astype(str).tolist()
+    ordered_labels = [label for label in pie_order if label in labels] + [label for label in labels if label not in pie_order]
     total = float(pie_df["Allocation ($)"].sum()) if not pie_df.empty else 0.0
     if total > 0:
         pie_df["Allocation (%)"] = pie_df["Allocation ($)"] / total
     else:
         pie_df["Allocation (%)"] = 0.0
-    pie_df["Label"] = pd.Categorical(pie_df["Label"], categories=pie_order, ordered=True)
+    pie_df["Label"] = pd.Categorical(pie_df["Label"], categories=ordered_labels, ordered=True)
     pie_df = pie_df.sort_values("Label")
 
     return (
@@ -3049,6 +3137,91 @@ def build_household_allocation_pie(df: pd.DataFrame) -> alt.Chart:
         .configure_view(stroke=None, fill="white")
         .properties(background="white")
     )
+
+
+def build_uploaded_allocation_table(df: pd.DataFrame) -> str:
+    rows: list[str] = ["<tr><th class='name'>Asset Class</th><th>Allocation (%)</th><th>Allocation ($)</th><th>Target %</th></tr>"]
+    total_value = float(df["Allocation ($)"].sum()) if not df.empty else 0.0
+    for _, row in df.iterrows():
+        rows.append(
+            "<tr>"
+            f"<td class='name'>{escape(str(row['Asset Class']))}</td>"
+            f"<td class='num'>{row['Allocation (%)'] * 100:.1f}%</td>"
+            f"<td class='num'>{row['Allocation ($)']:,.0f}</td>"
+            f"<td class='num'>{format_percent_from_decimal_dash(row['Target %'])}</td>"
+            "</tr>"
+        )
+    rows.append(
+        "<tr class='allocation-total-row'>"
+        "<td class='name'>Total</td><td></td>"
+        f"<td class='num'>{total_value:,.0f}</td><td></td>"
+        "</tr>"
+    )
+    return (
+        "<div class='table-scroll'><table class='market-table allocation-layout-table'>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def build_performance_chart(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=df["Date"],
+            y=df["Cost Basis"],
+            mode="lines",
+            name="Cost Basis",
+            line=dict(color="rgba(150, 140, 131, 0.95)", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(150, 140, 131, 0.22)",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["Date"],
+            y=df["EMV"],
+            mode="lines",
+            name="EMV",
+            line=dict(color="black", width=2.5),
+        )
+    )
+    fig.update_layout(
+        margin=dict(l=18, r=18, t=28, b=18),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
+        xaxis=dict(type="date", showgrid=False, showline=True, linecolor="black", tickcolor="black"),
+        yaxis=dict(showgrid=False, showline=True, linecolor="black", tickcolor="black"),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
+    summary_df = summarize_linked_returns(performance_df)
+    summary_display = summary_df.copy()
+    summary_display["NOF Linked Return"] = summary_display["NOF Linked Return"].apply(format_percent_from_decimal_dash)
+
+    st.markdown(
+        """
+        <section class="group-block">
+            <div class="group-header">Performance Block</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    chart_col, table_col = st.columns([2, 1], gap="large")
+    with chart_col:
+        st.plotly_chart(build_performance_chart(performance_df), use_container_width=True, config={"displayModeBar": False})
+    with table_col:
+        st.markdown(
+            build_compact_summary_table(
+                "NOF Linked Return Summary",
+                summary_display,
+                ["Period", "NOF Linked Return"],
+            ),
+            unsafe_allow_html=True,
+        )
 
 
 def compute_portfolio_assumption_metrics(
@@ -3187,6 +3360,8 @@ def render_portfolio_classification_dashboard(
     source_label: str,
     cliffwater_assumptions_df: pd.DataFrame,
     cliffwater_correlation_df: pd.DataFrame,
+    uploaded_allocation_df: pd.DataFrame | None = None,
+    uploaded_performance_df: pd.DataFrame | None = None,
 ) -> None:
     st.markdown(
         f"""
@@ -3203,27 +3378,30 @@ def render_portfolio_classification_dashboard(
     ambiguous = classified_df[classified_df["match status"] == "ambiguous"].copy()
     household_emv = float(matched["EMV"].fillna(0).sum()) if "EMV" in matched.columns else 0.0
 
-    allocation_summary = (
-        matched.groupby(["display class", "display segment"], dropna=False, as_index=False)["EMV"]
-        .sum()
-        .rename(columns={"display class": "Asset Class", "display segment": "Segment", "EMV": "Allocation ($)"})
-    )
-    if not allocation_summary.empty and household_emv > 0:
-        allocation_summary["Allocation (%)"] = allocation_summary["Allocation ($)"] / household_emv
-        class_order = {
-            "Equity": 0,
-            "Debt": 1,
-            "Government Debt": 2,
-            "Alternatives w/ Tax Benefits": 3,
-            "Real Assets": 4,
-            "Cash & Equivalents": 5,
-            "Unclassified": 6,
-        }
-        allocation_summary["_class_order"] = allocation_summary["Asset Class"].map(class_order).fillna(99)
-        allocation_summary = allocation_summary.sort_values(
-            ["_class_order", "Asset Class", "Allocation ($)"],
-            ascending=[True, True, False],
-        ).drop(columns="_class_order")
+    if uploaded_allocation_df is not None and not uploaded_allocation_df.empty:
+        allocation_summary = uploaded_allocation_df.copy()
+    else:
+        allocation_summary = (
+            matched.groupby(["display class", "display segment"], dropna=False, as_index=False)["EMV"]
+            .sum()
+            .rename(columns={"display class": "Asset Class", "display segment": "Segment", "EMV": "Allocation ($)"})
+        )
+        if not allocation_summary.empty and household_emv > 0:
+            allocation_summary["Allocation (%)"] = allocation_summary["Allocation ($)"] / household_emv
+            class_order = {
+                "Equity": 0,
+                "Debt": 1,
+                "Government Debt": 2,
+                "Alternatives w/ Tax Benefits": 3,
+                "Real Assets": 4,
+                "Cash & Equivalents": 5,
+                "Unclassified": 6,
+            }
+            allocation_summary["_class_order"] = allocation_summary["Asset Class"].map(class_order).fillna(99)
+            allocation_summary = allocation_summary.sort_values(
+                ["_class_order", "Asset Class", "Allocation ($)"],
+                ascending=[True, True, False],
+            ).drop(columns="_class_order")
 
     portfolio_metrics_df, risk_share_df = compute_portfolio_assumption_metrics(
         classified_df,
@@ -3244,7 +3422,13 @@ def render_portfolio_classification_dashboard(
         with pie_col:
             st.altair_chart(build_household_allocation_pie(allocation_summary), use_container_width=True)
         with table_col:
-            st.markdown(build_household_allocation_table_only(allocation_summary), unsafe_allow_html=True)
+            if uploaded_allocation_df is not None and not uploaded_allocation_df.empty:
+                st.markdown(build_uploaded_allocation_table(allocation_summary), unsafe_allow_html=True)
+            else:
+                st.markdown(build_household_allocation_table_only(allocation_summary), unsafe_allow_html=True)
+
+    if uploaded_performance_df is not None and not uploaded_performance_df.empty:
+        render_uploaded_performance_block(uploaded_performance_df)
 
     if not portfolio_metrics_df.empty:
         metrics_display = portfolio_metrics_df.copy()
@@ -3402,7 +3586,7 @@ def main() -> None:
         """
         <div class="hero">
             <h1>Essential Partners Investment Overview</h1>
-            <p>A real-time look at what is happening in today's markets.</p>
+            <p>A real-time look at what is happening today's markets.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3467,9 +3651,13 @@ def main() -> None:
         if dashboard_mode == "Portfolio Classification":
             portfolio_upload = st.file_uploader("Upload Portfolio", type=["csv", "xlsx", "xls"])
             pasted_portfolio_text = st.text_area("Or Paste Portfolio CSV", height=120)
+            performance_upload = st.file_uploader("Performance_Data", type=["csv"], key="performance_upload")
+            allocation_upload = st.file_uploader("Asset_Allocation_Data", type=["csv"], key="allocation_upload")
         else:
             portfolio_upload = None
             pasted_portfolio_text = ""
+            performance_upload = None
+            allocation_upload = None
         if dashboard_mode == "Curated Overview":
             selected_curated_classes = st.multiselect("Asset Class", options=curated_classes, default=curated_classes)
             selected_universe_classes = universe_classes
@@ -3526,6 +3714,20 @@ def main() -> None:
             portfolio_input_df = asset_master_df[["Long Name", "Ticker", "CUSIP", "Alternative Identifier"]].copy()
             portfolio_input_df["Account Name"] = "Asset Classification Master"
             portfolio_input_df["Account Type"] = "Reference"
+
+        performance_uploaded_df, performance_error = read_validated_csv(
+            performance_upload,
+            PERFORMANCE_REQUIRED_HEADERS,
+            "Performance_Data",
+        )
+        allocation_uploaded_df, allocation_error = read_validated_csv(
+            allocation_upload,
+            ALLOCATION_REQUIRED_HEADERS,
+            "Asset_Allocation_Data",
+        )
+        transformed_performance_df = transform_performance_upload(performance_uploaded_df) if performance_uploaded_df is not None else None
+        transformed_allocation_df = transform_allocation_upload(allocation_uploaded_df) if allocation_uploaded_df is not None else None
+
         classified_df, diagnostics_df = classify_portfolio(
             portfolio_input_df,
             asset_master_df,
@@ -3550,7 +3752,13 @@ def main() -> None:
             source_label,
             cliffwater_assumptions_df,
             cliffwater_correlation_df,
+            transformed_allocation_df,
+            transformed_performance_df,
         )
+        if allocation_error:
+            st.warning(allocation_error)
+        if performance_error:
+            st.warning(performance_error)
     elif dashboard_mode == "State of the Market":
         render_state_market_dashboard(state_factor_df, query_text)
     else:
