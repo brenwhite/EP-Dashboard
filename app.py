@@ -3162,38 +3162,61 @@ def build_uploaded_allocation_table(df: pd.DataFrame) -> str:
     )
 
 
-def build_performance_chart(df: pd.DataFrame) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=df["Date"],
-            y=df["Cost Basis"],
-            mode="lines",
-            name="Cost Basis",
-            line=dict(color="rgba(150, 140, 131, 0.95)", width=2),
-            fill="tozeroy",
-            fillcolor="rgba(150, 140, 131, 0.22)",
+def build_performance_chart(df: pd.DataFrame) -> alt.Chart:
+    chart_df = df[["Date", "EMV", "Cost Basis"]].copy().dropna(subset=["Date"]).sort_values("Date")
+    base = alt.Chart(chart_df).encode(
+        x=alt.X(
+            "Date:T",
+            axis=alt.Axis(
+                title=None,
+                labelColor="black",
+                tickColor="black",
+                domainColor="black",
+                grid=False,
+            ),
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=df["Date"],
-            y=df["EMV"],
-            mode="lines",
-            name="EMV",
-            line=dict(color="black", width=2.5),
+    area = base.mark_area(
+        color="rgb(150, 140, 131)",
+        opacity=0.22,
+        line={"color": "rgb(150, 140, 131)", "width": 2},
+    ).encode(
+        y=alt.Y(
+            "Cost Basis:Q",
+            axis=alt.Axis(
+                title=None,
+                labelColor="black",
+                tickColor="black",
+                domainColor="black",
+                grid=False,
+            ),
+        ),
+        tooltip=[
+            alt.Tooltip("Date:T", title="Date"),
+            alt.Tooltip("Cost Basis:Q", title="Cost Basis", format=",.0f"),
+        ],
+    )
+    line = base.mark_line(color="black", strokeWidth=2.5).encode(
+        y=alt.Y("EMV:Q"),
+        tooltip=[
+            alt.Tooltip("Date:T", title="Date"),
+            alt.Tooltip("EMV:Q", title="EMV", format=",.0f"),
+        ],
+    )
+    return (
+        alt.layer(area, line)
+        .properties(height=330, background="white")
+        .configure_view(stroke="black", strokeWidth=1, fill="white")
+        .configure_axis(
+            labelFontSize=11,
+            titleColor="black",
+            labelColor="black",
+            tickColor="black",
+            domainColor="black",
+            domainWidth=1.0,
+            tickWidth=1.0,
         )
     )
-    fig.update_layout(
-        margin=dict(l=18, r=18, t=28, b=18),
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
-        xaxis=dict(type="date", showgrid=False, showline=True, linecolor="black", tickcolor="black"),
-        yaxis=dict(showgrid=False, showline=True, linecolor="black", tickcolor="black"),
-        hovermode="x unified",
-    )
-    return fig
 
 
 def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
@@ -3211,7 +3234,7 @@ def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     )
     chart_col, table_col = st.columns([2, 1], gap="large")
     with chart_col:
-        st.plotly_chart(build_performance_chart(performance_df), use_container_width=True, config={"displayModeBar": False})
+        st.altair_chart(build_performance_chart(performance_df), use_container_width=True)
     with table_col:
         st.markdown(
             build_compact_summary_table(
@@ -3356,7 +3379,7 @@ def compute_portfolio_assumption_metrics(
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
-    source_label: str,
+    source_labels: list[str],
     cliffwater_assumptions_df: pd.DataFrame,
     cliffwater_correlation_df: pd.DataFrame,
     uploaded_allocation_df: pd.DataFrame | None = None,
@@ -3370,7 +3393,8 @@ def render_portfolio_classification_dashboard(
         """,
         unsafe_allow_html=True,
     )
-    st.caption(source_label)
+    for label in source_labels:
+        st.caption(label)
 
     matched = classified_df[classified_df["match status"] == "matched"].copy()
     unmatched = classified_df[classified_df["match status"] == "unmatched"].copy()
@@ -3727,6 +3751,12 @@ def main() -> None:
         transformed_performance_df = transform_performance_upload(performance_uploaded_df) if performance_uploaded_df is not None else None
         transformed_allocation_df = transform_allocation_upload(allocation_uploaded_df) if allocation_uploaded_df is not None else None
 
+        source_labels = [f"Portfolio source: {source_label}"]
+        if allocation_upload is not None and allocation_error is None:
+            source_labels.append(f"Asset allocation source: Uploaded file: {allocation_upload.name}")
+        if performance_upload is not None and performance_error is None:
+            source_labels.append(f"Performance source: Uploaded file: {performance_upload.name}")
+
         classified_df, diagnostics_df = classify_portfolio(
             portfolio_input_df,
             asset_master_df,
@@ -3748,7 +3778,7 @@ def main() -> None:
         render_portfolio_classification_dashboard(
             classified_df,
             diagnostics_df,
-            source_label,
+            source_labels,
             cliffwater_assumptions_df,
             cliffwater_correlation_df,
             transformed_allocation_df,
