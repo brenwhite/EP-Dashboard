@@ -1336,7 +1336,7 @@ def load_capital_market_map(csv_name: str) -> pd.DataFrame:
 def load_cliffwater_assumptions(csv_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     csv_path = Path(__file__).resolve().parent / csv_name
     if not csv_path.exists():
-        raise FileNotFoundError(f"Missing Cliffwater assumptions file: {csv_path}")
+        raise FileNotFoundError(f"Missing assumptions file: {csv_path}")
     df = pd.read_csv(csv_path)
     first_col = df.columns[0]
     assumptions = df[[first_col, "R % avg", "Vol"]].rename(columns={first_col: "CW Asset Class"}).copy()
@@ -1554,7 +1554,7 @@ def map_to_cliffwater(
 
     assumptions = cw_lookup.get(normalize_text_key(cw_asset_class), {}) if cw_asset_class else {}
     return {
-        "Cliffwater asset class": assumptions.get("CW Asset Class", cw_asset_class),
+        "Asset Class": assumptions.get("CW Asset Class", cw_asset_class),
         "expected return": assumptions.get("Expected Return"),
         "volatility": assumptions.get("Volatility"),
         "assumption match source": map_source,
@@ -3301,7 +3301,7 @@ def compute_portfolio_assumption_metrics(
     if household_total <= 0:
         return pd.DataFrame(), pd.DataFrame()
 
-    analytics = matched.dropna(subset=["Cliffwater asset class", "expected return", "volatility"]).copy()
+    analytics = matched.dropna(subset=["Asset Class", "expected return", "volatility"]).copy()
     if analytics.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -3310,7 +3310,7 @@ def compute_portfolio_assumption_metrics(
         return pd.DataFrame(), pd.DataFrame()
 
     analytics["weight"] = analytics["EMV"] / covered_total
-    analytics["_norm_cw_asset_class"] = analytics["Cliffwater asset class"].map(normalize_text_key)
+    analytics["_norm_cw_asset_class"] = analytics["Asset Class"].map(normalize_text_key)
 
     corr_df = cliffwater_correlation_df.copy()
     first_col = corr_df.columns[0]
@@ -3390,14 +3390,14 @@ def compute_portfolio_assumption_metrics(
     analytics["Component Risk"] = component_risk
 
     risk_share_df = (
-        analytics.groupby("Cliffwater asset class", dropna=False)
+        analytics.groupby("Asset Class", dropna=False)
         .agg(
             **{
                 "Risk Share": ("Risk Share", "sum"),
             }
         )
         .reset_index()
-        .rename(columns={"Cliffwater asset class": "Cliffwater Asset Class"})
+        .rename(columns={"Asset Class": "Asset Class"})
         .sort_values("Risk Share", ascending=False)
         .head(5)
     )
@@ -3514,9 +3514,9 @@ def render_portfolio_classification_dashboard(
         with risk_col:
             st.markdown(
                 build_compact_summary_table(
-                    "Top 5 Risk Share by Cliffwater Asset Class",
+                    "Top 5 Risk Share by Asset Class",
                     risk_share_display,
-                    ["Cliffwater Asset Class", "Risk Share"],
+                    ["Asset Class", "Risk Share"],
                 ),
                 unsafe_allow_html=True,
             )
@@ -3541,7 +3541,7 @@ def render_portfolio_classification_dashboard(
                                     "security name",
                                     "ticker",
                                     "EMV",
-                                    "Cliffwater asset class",
+                                    "Asset Class",
                                     "match method",
                                     "Allocation",
                                 ],
@@ -3549,7 +3549,7 @@ def render_portfolio_classification_dashboard(
                             unsafe_allow_html=True,
                         )
 
-    assumptions_gaps = matched[matched["Cliffwater asset class"].isna()].copy()
+    assumptions_gaps = matched[matched["Asset Class"].isna()].copy()
     review_sections = [
         (
             "Matched Securities Review",
@@ -3564,7 +3564,7 @@ def render_portfolio_classification_dashboard(
                     "match method",
                     "internal class",
                     "internal segment",
-                    "Cliffwater asset class",
+                    "Asset Class",
                 ],
             ),
         ),
