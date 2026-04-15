@@ -215,7 +215,7 @@ DISPLAY_SEGMENT_MAP = {
     ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Tax-Aware Hedge Funds",
 }
 
-PERFORMANCE_REQUIRED_HEADERS = ["Date", "EMV", "Net Additions", "NOF Linked"]
+PERFORMANCE_REQUIRED_HEADERS = ["Date", "EMV", "Net Additions", "NOF Return"]
 ALLOCATION_REQUIRED_HEADERS = ["Asset Class", "Current Value", "Target %"]
 
 FULL_UNIVERSE_PE_CLASSES = {
@@ -1380,7 +1380,7 @@ def transform_performance_upload(df: pd.DataFrame) -> pd.DataFrame:
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
     out["EMV"] = parse_uploaded_numeric_series(out["EMV"])
     out["Net Additions"] = parse_uploaded_numeric_series(out["Net Additions"])
-    out["NOF Linked"] = parse_uploaded_return_series(out["NOF Linked"])
+    out["NOF Return"] = parse_uploaded_return_series(out["NOF Return"])
     out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
     out["Cost Basis"] = out["Net Additions"].fillna(0).cumsum()
     return out
@@ -1405,18 +1405,23 @@ def transform_allocation_upload(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["Period", "NOF Linked"])
-    latest_date = df["Date"].max()
+        return pd.DataFrame(columns=["Period", "NOF Return"])
+    series_df = df[["Date", "NOF Return"]].dropna().sort_values("Date").reset_index(drop=True)
+    if series_df.empty:
+        return pd.DataFrame(columns=["Period", "NOF Return"])
+
+    latest_date = series_df["Date"].max()
     anchors = {
         "YTD": pd.Timestamp(year=latest_date.year, month=1, day=1),
         "1Y": latest_date - pd.DateOffset(years=1),
-        "ITD": df["Date"].min(),
+        "ITD": series_df["Date"].min(),
     }
+
     rows: list[dict[str, object]] = []
     for label, anchor in anchors.items():
-        period_returns = df.loc[df["Date"] >= anchor, "NOF Linked"].dropna()
+        period_returns = series_df.loc[series_df["Date"] >= anchor, "NOF Return"].dropna()
         value = float((1.0 + period_returns).prod() - 1.0) if not period_returns.empty else np.nan
-        rows.append({"Period": label, "NOF Linked": value})
+        rows.append({"Period": label, "NOF Return": value})
     return pd.DataFrame(rows)
 
 
@@ -3222,7 +3227,7 @@ def build_performance_chart(df: pd.DataFrame) -> alt.Chart:
 def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     summary_df = summarize_linked_returns(performance_df)
     summary_display = summary_df.copy()
-    summary_display["NOF Linked"] = summary_display["NOF Linked"].apply(format_percent_from_decimal_dash)
+    summary_display["NOF Return"] = summary_display["NOF Return"].apply(format_percent_from_decimal_dash)
 
     st.markdown(
         """
@@ -3238,9 +3243,9 @@ def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     with table_col:
         st.markdown(
             build_compact_summary_table(
-                "NOF Linked Summary",
+                "Performance (Net of Fees)",
                 summary_display,
-                ["Period", "NOF Linked"],
+                ["Period", "NOF Return"],
             ),
             unsafe_allow_html=True,
         )
