@@ -1380,7 +1380,7 @@ def transform_performance_upload(df: pd.DataFrame) -> pd.DataFrame:
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
     out["EMV"] = parse_uploaded_numeric_series(out["EMV"])
     out["Net Additions"] = parse_uploaded_numeric_series(out["Net Additions"])
-    out["NOF Linked Return"] = parse_uploaded_return_series(out["NOF Linked Return"])
+    out["NOF Linked"] = parse_uploaded_return_series(out["NOF Linked"])
     out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
     out["Cost Basis"] = out["Net Additions"].fillna(0).cumsum()
     return out
@@ -1405,7 +1405,7 @@ def transform_allocation_upload(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["Period", "NOF Linked Return"])
+        return pd.DataFrame(columns=["Period", "NOF Linked"])
     latest_date = df["Date"].max()
     anchors = {
         "YTD": pd.Timestamp(year=latest_date.year, month=1, day=1),
@@ -1414,9 +1414,9 @@ def summarize_linked_returns(df: pd.DataFrame) -> pd.DataFrame:
     }
     rows: list[dict[str, object]] = []
     for label, anchor in anchors.items():
-        period_returns = df.loc[df["Date"] >= anchor, "NOF Linked Return"].dropna()
+        period_returns = df.loc[df["Date"] >= anchor, "NOF Linked"].dropna()
         value = float((1.0 + period_returns).prod() - 1.0) if not period_returns.empty else np.nan
-        rows.append({"Period": label, "NOF Linked Return": value})
+        rows.append({"Period": label, "NOF Linked": value})
     return pd.DataFrame(rows)
 
 
@@ -3199,7 +3199,7 @@ def build_performance_chart(df: pd.DataFrame) -> go.Figure:
 def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     summary_df = summarize_linked_returns(performance_df)
     summary_display = summary_df.copy()
-    summary_display["NOF Linked Return"] = summary_display["NOF Linked Return"].apply(format_percent_from_decimal_dash)
+    summary_display["NOF Linked"] = summary_display["NOF Linked"].apply(format_percent_from_decimal_dash)
 
     st.markdown(
         """
@@ -3215,9 +3215,9 @@ def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     with table_col:
         st.markdown(
             build_compact_summary_table(
-                "NOF Linked Return Summary",
+                "NOF Linked Summary",
                 summary_display,
-                ["Period", "NOF Linked Return"],
+                ["Period", "NOF Linked"],
             ),
             unsafe_allow_html=True,
         )
