@@ -215,7 +215,7 @@ DISPLAY_SEGMENT_MAP = {
     ("Alternatives with Tax Benefits", "Tax-Aware Hedge Fund"): "Tax-Aware Hedge Funds",
 }
 
-PERFORMANCE_REQUIRED_HEADERS = ["Date", "EMV", "Net Additions", "NOF Linked Return"]
+PERFORMANCE_REQUIRED_HEADERS = ["Date", "EMV", "Net Additions", "NOF Linked"]
 ALLOCATION_REQUIRED_HEADERS = ["Asset Class", "Current Value", "Target %"]
 
 FULL_UNIVERSE_PE_CLASSES = {
