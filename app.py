@@ -3257,14 +3257,15 @@ def build_performance_chart(df: pd.DataFrame) -> alt.Chart:
 def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
     summary_df = summarize_performance_returns(performance_df)
     summary_display = summary_df.copy()
-    summary_display["Performance (Net of Fees)"] = summary_display["Performance (Net of Fees)"].apply(
+    summary_display["Performance (%)"] = summary_display["Performance (Net of Fees)"].apply(
         format_percent_from_decimal_dash
     )
+    summary_display = summary_display.drop(columns=["Performance (Net of Fees)"])
 
     st.markdown(
         """
         <section class="group-block">
-            <div class="group-header">Performance Block</div>
+            <div class="group-header">Portfolio Performance</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -3277,7 +3278,7 @@ def render_uploaded_performance_block(performance_df: pd.DataFrame) -> None:
             build_compact_summary_table(
                 "Performance (Net of Fees)",
                 summary_display,
-                ["Period", "Performance (Net of Fees)"],
+                ["Period", "Performance (%)"],
             ),
             unsafe_allow_html=True,
         )
@@ -3416,23 +3417,11 @@ def compute_portfolio_assumption_metrics(
 def render_portfolio_classification_dashboard(
     classified_df: pd.DataFrame,
     diagnostics_df: pd.DataFrame,
-    source_labels: list[str],
     cliffwater_assumptions_df: pd.DataFrame,
     cliffwater_correlation_df: pd.DataFrame,
     uploaded_allocation_df: pd.DataFrame | None = None,
     uploaded_performance_df: pd.DataFrame | None = None,
 ) -> None:
-    st.markdown(
-        f"""
-        <section class="group-block">
-            <div class="group-header">Portfolio Classification Source</div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-    for label in source_labels:
-        st.caption(label)
-
     matched = classified_df[classified_df["match status"] == "matched"].copy()
     unmatched = classified_df[classified_df["match status"] == "unmatched"].copy()
     ambiguous = classified_df[classified_df["match status"] == "ambiguous"].copy()
@@ -3560,49 +3549,53 @@ def render_portfolio_classification_dashboard(
                             unsafe_allow_html=True,
                         )
 
-    st.markdown(
-        build_allocation_table(
-            "Matched Securities Review",
-            matched,
-            [
-                "security name",
-                "ticker",
-                "EMV",
-                "matched security from master file",
-                "match method",
-                "internal class",
-                "internal segment",
-                "Cliffwater asset class",
-            ],
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        build_generic_table(
-            "Unmatched Securities Review",
-            unmatched,
-            ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        build_generic_table(
-            "Ambiguous Securities Review",
-            ambiguous,
-            ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
-        ),
-        unsafe_allow_html=True,
-    )
-
     assumptions_gaps = matched[matched["Cliffwater asset class"].isna()].copy()
-    st.markdown(
-        build_generic_table(
-            "Assumption Mapping Gaps",
-            assumptions_gaps,
-            ["security name", "matched security from master file", "internal class", "internal segment", "match method"],
+    review_sections = [
+        (
+            "Matched Securities Review",
+            build_allocation_table(
+                "Matched Securities Review",
+                matched,
+                [
+                    "security name",
+                    "ticker",
+                    "EMV",
+                    "matched security from master file",
+                    "match method",
+                    "internal class",
+                    "internal segment",
+                    "Cliffwater asset class",
+                ],
+            ),
         ),
-        unsafe_allow_html=True,
-    )
+        (
+            "Unmatched Securities Review",
+            build_generic_table(
+                "Unmatched Securities Review",
+                unmatched,
+                ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+            ),
+        ),
+        (
+            "Ambiguous Securities Review",
+            build_generic_table(
+                "Ambiguous Securities Review",
+                ambiguous,
+                ["security name", "ticker", "CUSIP", "alternative identifier", "match method"],
+            ),
+        ),
+        (
+            "Assumption Mapping Gaps",
+            build_generic_table(
+                "Assumption Mapping Gaps",
+                assumptions_gaps,
+                ["security name", "matched security from master file", "internal class", "internal segment", "match method"],
+            ),
+        ),
+    ]
+    for title, table_html in review_sections:
+        with st.expander(title, expanded=False):
+            st.markdown(table_html, unsafe_allow_html=True)
 
 
 def render_state_market_dashboard(factor_df: pd.DataFrame, factor_query: str) -> None:
@@ -3788,12 +3781,6 @@ def main() -> None:
         transformed_performance_df = transform_performance_upload(performance_uploaded_df) if performance_uploaded_df is not None else None
         transformed_allocation_df = transform_allocation_upload(allocation_uploaded_df) if allocation_uploaded_df is not None else None
 
-        source_labels = [f"Portfolio source: {source_label}"]
-        if allocation_upload is not None and allocation_error is None:
-            source_labels.append(f"Asset allocation source: Uploaded file: {allocation_upload.name}")
-        if performance_upload is not None and performance_error is None:
-            source_labels.append(f"Performance source: Uploaded file: {performance_upload.name}")
-
         classified_df, diagnostics_df = classify_portfolio(
             portfolio_input_df,
             asset_master_df,
@@ -3815,7 +3802,6 @@ def main() -> None:
         render_portfolio_classification_dashboard(
             classified_df,
             diagnostics_df,
-            source_labels,
             cliffwater_assumptions_df,
             cliffwater_correlation_df,
             transformed_allocation_df,
